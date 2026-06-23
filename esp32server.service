@@ -1,0 +1,15 @@
+[Unit]
+Description=ESP32 Smart Pillow Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/espagent/server
+ExecStart=/opt/espagent/server/venv/bin/python main.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
