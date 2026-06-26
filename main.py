@@ -69,6 +69,12 @@ _pc_command_futures: dict[str, asyncio.Future] = {}  # LLM → PC Agent 往返
 _sensor_futures: dict[str, asyncio.Future] = {}     # LLM → ESP32 传感器读取
 last_active_esp32_id: str | None = None
 
+# Mobile H5 clients and latest ESP32 sensor cache.
+app_clients: dict[str, WebSocket] = {}
+latest_sensor_data: dict | None = None
+sensor_poll_task: asyncio.Task | None = None
+SENSOR_POLL_INTERVAL_SEC = 2.0
+
 
 async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int) -> str:
     """LLM 调 pc_command 工具时的回调：发命令到 PC Agent 并等结果。"""
@@ -291,6 +297,47 @@ def pick_esp32_client(client_id: str | None = None) -> str | None:
     return next(iter(esp32_clients.keys()), None)
 
 
+async def broadcast_to_apps(payload: dict) -> None:
+    """Broadcast JSON to all connected mobile H5 clients."""
+    dead: list[str] = []
+    text = json.dumps(payload, ensure_ascii=False)
+    for app_id, ws in list(app_clients.items()):
+        try:
+            await ws.send_text(text)
+        except Exception:
+            dead.append(app_id)
+    for app_id in dead:
+        app_clients.pop(app_id, None)
+
+
+async def request_sensor_data(client_id: str | None = None) -> bool:
+    """Ask the active ESP32 to return one sensor_data frame."""
+    target = pick_esp32_client(client_id)
+    if not target:
+        return False
+    return await send_json_to_esp32(target, {
+        "type": "read_sensors",
+        "request_id": f"app-{int(time.time() * 1000)}",
+    })
+
+
+async def sensor_poll_loop() -> None:
+    """Poll ESP32 only while at least one mobile H5 client is connected."""
+    while True:
+        try:
+            if app_clients:
+                await request_sensor_data()
+        except Exception as e:
+            print(f"[APP] sensor poll error: {e}")
+        await asyncio.sleep(SENSOR_POLL_INTERVAL_SEC)
+
+
+def ensure_sensor_poll_task() -> None:
+    global sensor_poll_task
+    if sensor_poll_task is None or sensor_poll_task.done():
+        sensor_poll_task = asyncio.create_task(sensor_poll_loop())
+
+
 def extract_search_query_from_url(url: str) -> str | None:
     """Return query text if URL is a search-engine result page."""
     parsed = urllib.parse.urlparse(url)
@@ -399,6 +446,136 @@ async def handle_ai_stream_result(client_id: str, user_text: str, history: list[
             await send_tts_state_to_esp32(client_id, "stop", turn_id=turn_id)
 
     print(f"[LLM-stream] frames={total_frames}, reply={full_reply.strip()!r}")
+
+
+async def send_app_message(websocket: WebSocket, payload: dict) -> None:
+    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+
+
+async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str | None = None) -> None:
+    """One-shot mobile text chat: reply by app text + ESP32 TTS/subtitle, without starting listen mode."""
+    user_text = (text or "").strip()
+    request_id = request_id or f"app-chat-{int(time.time() * 1000)}"
+    if not user_text:
+        return
+
+    target = pick_esp32_client()
+    if not target:
+        await send_app_message(websocket, {
+            "type": "app_chat_error",
+            "request_id": request_id,
+            "error": "ESP32 not connected",
+        })
+        return
+
+    turn_id = next_turn_id(target)
+    await cancel_active_task(target)
+    await send_json_to_esp32(target, {
+        "type": "status",
+        "text": user_text,
+        "source": "app_chat",
+        "turn_id": turn_id,
+    })
+    await send_app_message(websocket, {
+        "type": "app_chat_start",
+        "request_id": request_id,
+        "esp32_connected": True,
+    })
+
+    history: list[dict] = []
+    text_buffer = ""
+    processed = 0
+    full_reply = ""
+    started_tts = False
+    is_first_sentence = True
+    total_frames = 0
+
+    import opuslib as _opuslib
+    encoder = _opuslib.Encoder(16000, 1, _opuslib.APPLICATION_VOIP)
+
+    try:
+        if is_exit_phrase(user_text):
+            full_reply = EXIT_REPLY_TEXT
+            await send_app_message(websocket, {
+                "type": "app_chat_delta",
+                "request_id": request_id,
+                "delta": full_reply,
+                "text": full_reply,
+            })
+            started_tts = await send_tts_state_to_esp32(target, "start", source="app_chat", turn_id=turn_id)
+            if started_tts:
+                await send_tts_state_to_esp32(
+                    target, "sentence_start", source="app_chat", turn_id=turn_id, text=full_reply
+                )
+                total_frames += await send_tts_audio_frames_to_esp32(
+                    target, full_reply, source="app_chat", turn_id=turn_id, encoder=encoder
+                )
+        else:
+            async for delta in chat_stream(user_text, history, client_id=target, turn_id=turn_id):
+                if not delta:
+                    continue
+                full_reply += delta
+                text_buffer += delta
+                await send_app_message(websocket, {
+                    "type": "app_chat_delta",
+                    "request_id": request_id,
+                    "delta": delta,
+                    "text": full_reply,
+                })
+
+                while True:
+                    new_part = text_buffer[processed:]
+                    n = _should_flush_tts(new_part, is_first=is_first_sentence)
+                    if not n:
+                        break
+                    sentence = text_buffer[processed:processed + n].strip()
+                    processed += n
+                    if not sentence:
+                        continue
+                    if not started_tts:
+                        started_tts = await send_tts_state_to_esp32(
+                            target, "start", source="app_chat", turn_id=turn_id
+                        )
+                    if started_tts:
+                        await send_tts_state_to_esp32(
+                            target, "sentence_start", source="app_chat", turn_id=turn_id, text=sentence
+                        )
+                        total_frames += await send_tts_audio_frames_to_esp32(
+                            target, sentence, source="app_chat", turn_id=turn_id, encoder=encoder
+                        )
+                    is_first_sentence = False
+
+            remaining = text_buffer[processed:].strip()
+            if remaining:
+                if not started_tts:
+                    started_tts = await send_tts_state_to_esp32(
+                        target, "start", source="app_chat", turn_id=turn_id
+                    )
+                if started_tts:
+                    await send_tts_state_to_esp32(
+                        target, "sentence_start", source="app_chat", turn_id=turn_id, text=remaining
+                    )
+                    total_frames += await send_tts_audio_frames_to_esp32(
+                        target, remaining, source="app_chat", turn_id=turn_id, encoder=encoder
+                    )
+
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": full_reply.strip(),
+            "turn_id": turn_id,
+        })
+        print(f"[APP-chat] frames={total_frames}, reply={full_reply.strip()!r}")
+    except Exception as exc:
+        print(f"[APP-chat] error: {exc}")
+        await send_app_message(websocket, {
+            "type": "app_chat_error",
+            "request_id": request_id,
+            "error": str(exc)[:160],
+        })
+    finally:
+        if started_tts:
+            await send_tts_state_to_esp32(target, "stop", source="app_chat", turn_id=turn_id)
 
 
 async def answer_user_text(client_id: str, text: str, history: list[dict], turn_id: int) -> None:
@@ -560,7 +737,7 @@ async def esp32_endpoint(websocket: WebSocket):
     新协议：hello / listen start / binary Opus / listen stop / tts start|stop。
     同时保留 text、audio、audio_start、audio_end 等旧测试入口。
     """
-    global last_active_esp32_id
+    global last_active_esp32_id, latest_sensor_data
 
     await websocket.accept()
     client_id = str(id(websocket))
@@ -738,6 +915,16 @@ async def esp32_endpoint(websocket: WebSocket):
                 elif msg_type == "sensor_data":
                     request_id = data.get("request_id", "")
                     sensor_payload = data.get("data", {})
+                    latest_sensor_data = {
+                        "received_at": time.time(),
+                        "client_id": client_id,
+                        "data": sensor_payload,
+                    }
+                    await broadcast_to_apps({
+                        "type": "sensor_data",
+                        "esp32_connected": True,
+                        "latest": latest_sensor_data,
+                    })
                     if request_id and request_id in _sensor_futures:
                         future = _sensor_futures.pop(request_id, None)
                         if future and not future.done():
@@ -745,6 +932,13 @@ async def esp32_endpoint(websocket: WebSocket):
                             print(f"[ESP32] sensor_data resolved request_id={request_id}")
 
                 # ========== 心跳 ==========
+                elif msg_type == "pump_result":
+                    await broadcast_to_apps({
+                        "type": "pump_result",
+                        "esp32_connected": True,
+                        "data": data,
+                    })
+
                 elif msg_type == "ping":
                     await send_json_to_esp32(client_id, {"type": "pong"})
 
@@ -781,6 +975,77 @@ async def esp32_endpoint(websocket: WebSocket):
                     fut.set_result("ESP32 已断开连接")
         if last_active_esp32_id == client_id:
             last_active_esp32_id = pick_esp32_client()
+
+
+@app.get("/api/latest_sensors")
+async def api_latest_sensors():
+    return {
+        "ok": True,
+        "esp32_connected": bool(esp32_clients),
+        "app_clients": len(app_clients),
+        "latest": latest_sensor_data,
+    }
+
+
+@app.websocket("/ws/app")
+async def app_endpoint(websocket: WebSocket):
+    """Mobile H5 entry: receive live ESP32 sensor telemetry."""
+    await websocket.accept()
+    app_id = str(id(websocket))
+    app_clients[app_id] = websocket
+    ensure_sensor_poll_task()
+    print(f"[APP] connected ({app_id})")
+
+    await websocket.send_text(json.dumps({
+        "type": "app_hello",
+        "esp32_connected": bool(esp32_clients),
+        "latest": latest_sensor_data,
+    }, ensure_ascii=False))
+    await request_sensor_data()
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+
+            msg_type = data.get("type")
+            if msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
+            elif msg_type == "read_sensors":
+                ok = await request_sensor_data(data.get("client_id"))
+                await websocket.send_text(json.dumps({
+                    "type": "read_sensors_ack",
+                    "ok": ok,
+                    "esp32_connected": bool(esp32_clients),
+                }, ensure_ascii=False))
+            elif msg_type == "app_chat":
+                await handle_app_chat_once(
+                    websocket,
+                    str(data.get("text") or ""),
+                    str(data.get("request_id") or ""),
+                )
+            elif msg_type == "pillow_cmd":
+                target = pick_esp32_client(data.get("client_id"))
+                payload = {
+                    "type": "pillow_cmd",
+                    "action": data.get("action"),
+                    "duration_sec": int(data.get("duration_sec") or 3),
+                }
+                if data.get("target_kpa") is not None:
+                    payload["target_kpa"] = float(data.get("target_kpa"))
+                ok = await send_json_to_esp32(target, payload) if target else False
+                await websocket.send_text(json.dumps({
+                    "type": "command_ack",
+                    "target": "pillow",
+                    "ok": ok,
+                }, ensure_ascii=False))
+    except WebSocketDisconnect:
+        print(f"[APP] disconnected ({app_id})")
+    finally:
+        app_clients.pop(app_id, None)
 
 
 @app.websocket("/ws/pc_agent")
@@ -875,6 +1140,8 @@ async def health():
         "esp32_connected": bool(esp32_clients),
         "esp32_clients": len(esp32_clients),
         "pc_agents": len(pc_agents),
+        "app_clients": len(app_clients),
+        "has_sensor_data": latest_sensor_data is not None,
         "version": APP_VERSION,
     }
 
