@@ -17,6 +17,7 @@ WebSocket 端点：
 """
 import sys
 import json
+import math
 import asyncio
 import base64
 import re
@@ -33,9 +34,22 @@ import urllib.parse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from config import SERVER_HOST, SERVER_PORT
 from stt_xunfei import recognize, recognize_queue
-from llm_deepseek import chat_stream, set_pc_command_callback, set_pillow_callback, set_read_sensors_callback
+from llm_deepseek import (
+    chat_stream,
+    set_pc_command_callback,
+    set_pillow_callback,
+    set_led_callback,
+    set_read_sensors_callback,
+)
 from tts_volc import synthesize
 from web_search import search_web  # 搜索工具，供后续 function calling 工具接入时使用
+from user_settings import (
+    get_quiet_status,
+    is_ai_screen_blocked,
+    is_ai_voice_blocked,
+    load_user_settings,
+    save_user_settings,
+)
 
 app = FastAPI(title="Smart Pillow Cloud Server")
 APP_VERSION = "xiaozhi_realtime_v5"
@@ -71,6 +85,7 @@ last_active_esp32_id: str | None = None
 
 # Mobile H5 clients and latest ESP32 sensor cache.
 app_clients: dict[str, WebSocket] = {}
+app_chat_histories: dict[str, list[dict]] = {}
 latest_sensor_data: dict | None = None
 sensor_poll_task: asyncio.Task | None = None
 SENSOR_POLL_INTERVAL_SEC = 2.0
@@ -100,16 +115,54 @@ async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int
 
 
 async def _pillow_cb(action: str, duration_sec: int, client_id: str, turn_id: int,
-                     target_kpa: float = 0) -> str:
+                     target_kpa=None) -> str:
     """LLM 调 pillow_control 工具时：发 WebSocket 命令到 ESP32。"""
     target = pick_esp32_client(client_id)
     if not target:
         return "ESP32 未连接"
     payload = {"type": "pillow_cmd", "action": action, "duration_sec": duration_sec}
-    if target_kpa > 0:
-        payload["target_kpa"] = target_kpa
+    if target_kpa is not None:
+        target_value = float(target_kpa)
+        if not math.isfinite(target_value):
+            return "目标气压无效"
+        payload["target_kpa"] = max(0.0, min(10.0, target_value))
     ok = await send_json_to_esp32(target, payload)
     return "已发送枕头指令" if ok else "发送失败"
+
+
+def _clamp_int(value, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+async def _led_cb(action: str, mode: str, color: str, brightness_pct, speed_pct,
+                  duration_sec, client_id: str, turn_id: int) -> str:
+    """LLM 调 led_control 工具时：把语义灯效参数转发到 ESP32。"""
+    target = pick_esp32_client(client_id)
+    if not target:
+        return "ESP32 未连接"
+
+    payload = {
+        "type": "led_cmd",
+        "action": action or "set",
+    }
+    if mode:
+        payload["mode"] = mode
+    if color:
+        payload["color"] = color
+    if brightness_pct is not None:
+        payload["brightness_pct"] = _clamp_int(brightness_pct, 45, 0, 100)
+    if speed_pct is not None:
+        payload["speed_pct"] = _clamp_int(speed_pct, 35, 0, 100)
+    if duration_sec is not None:
+        payload["duration_sec"] = _clamp_int(duration_sec, 0, 0, 600)
+
+    ok = await send_json_to_esp32(target, payload)
+    return "已发送灯带指令" if ok else "发送失败"
+
 
 async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
     """LLM 调 read_sensors 工具时：发 WebSocket 命令到 ESP32 并等待传感器数据。"""
@@ -136,6 +189,7 @@ async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
 # 注册回调
 set_pc_command_callback(_pc_command_cb)
 set_pillow_callback(_pillow_cb)
+set_led_callback(_led_cb)
 set_read_sensors_callback(_read_sensors_cb)
 
 
@@ -452,7 +506,12 @@ async def send_app_message(websocket: WebSocket, payload: dict) -> None:
     await websocket.send_text(json.dumps(payload, ensure_ascii=False))
 
 
-async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str | None = None) -> None:
+async def handle_app_chat_once(
+    websocket: WebSocket,
+    text: str,
+    request_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """One-shot mobile text chat: reply by app text + ESP32 TTS/subtitle, without starting listen mode."""
     user_text = (text or "").strip()
     request_id = request_id or f"app-chat-{int(time.time() * 1000)}"
@@ -468,21 +527,30 @@ async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str 
         })
         return
 
+    settings = load_user_settings()
+    quiet_status = get_quiet_status(settings)
+    allow_device_tts = not is_ai_voice_blocked(settings)
+    allow_device_status = not is_ai_screen_blocked(settings)
+
     turn_id = next_turn_id(target)
     await cancel_active_task(target)
-    await send_json_to_esp32(target, {
-        "type": "status",
-        "text": user_text,
-        "source": "app_chat",
-        "turn_id": turn_id,
-    })
+    if allow_device_status:
+        await send_json_to_esp32(target, {
+            "type": "status",
+            "text": user_text,
+            "source": "app_chat",
+            "turn_id": turn_id,
+        })
     await send_app_message(websocket, {
         "type": "app_chat_start",
         "request_id": request_id,
         "esp32_connected": True,
+        "device_tts": allow_device_tts,
+        "quiet_status": quiet_status,
     })
 
-    history: list[dict] = []
+    history_key = (session_id or str(id(websocket))).strip() or str(id(websocket))
+    history = app_chat_histories.setdefault(history_key, [])
     text_buffer = ""
     processed = 0
     full_reply = ""
@@ -502,7 +570,8 @@ async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str 
                 "delta": full_reply,
                 "text": full_reply,
             })
-            started_tts = await send_tts_state_to_esp32(target, "start", source="app_chat", turn_id=turn_id)
+            if allow_device_tts:
+                started_tts = await send_tts_state_to_esp32(target, "start", source="app_chat", turn_id=turn_id)
             if started_tts:
                 await send_tts_state_to_esp32(
                     target, "sentence_start", source="app_chat", turn_id=turn_id, text=full_reply
@@ -532,7 +601,7 @@ async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str 
                     processed += n
                     if not sentence:
                         continue
-                    if not started_tts:
+                    if allow_device_tts and not started_tts:
                         started_tts = await send_tts_state_to_esp32(
                             target, "start", source="app_chat", turn_id=turn_id
                         )
@@ -547,7 +616,7 @@ async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str 
 
             remaining = text_buffer[processed:].strip()
             if remaining:
-                if not started_tts:
+                if allow_device_tts and not started_tts:
                     started_tts = await send_tts_state_to_esp32(
                         target, "start", source="app_chat", turn_id=turn_id
                     )
@@ -564,6 +633,8 @@ async def handle_app_chat_once(websocket: WebSocket, text: str, request_id: str 
             "request_id": request_id,
             "text": full_reply.strip(),
             "turn_id": turn_id,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
         })
         print(f"[APP-chat] frames={total_frames}, reply={full_reply.strip()!r}")
     except Exception as exc:
@@ -939,6 +1010,20 @@ async def esp32_endpoint(websocket: WebSocket):
                         "data": data,
                     })
 
+                elif msg_type == "led_state":
+                    if latest_sensor_data and latest_sensor_data.get("data") is not None:
+                        latest_sensor_data["data"]["led_enabled"] = bool(data.get("enabled"))
+                        latest_sensor_data["data"]["led_brightness"] = int(data.get("brightness") or 0)
+                        latest_sensor_data["data"]["led_brightness_pct"] = int(data.get("brightness_pct") or 0)
+                        latest_sensor_data["data"]["led_mode"] = data.get("mode") or "solid"
+                        latest_sensor_data["data"]["led_color"] = data.get("color") or "warm"
+                        latest_sensor_data["data"]["led_speed_pct"] = int(data.get("speed_pct") or 0)
+                    await broadcast_to_apps({
+                        "type": "led_state",
+                        "esp32_connected": True,
+                        "data": data,
+                    })
+
                 elif msg_type == "ping":
                     await send_json_to_esp32(client_id, {"type": "pong"})
 
@@ -987,6 +1072,32 @@ async def api_latest_sensors():
     }
 
 
+@app.get("/api/user_settings")
+async def api_user_settings():
+    settings = load_user_settings()
+    return {
+        "ok": True,
+        "settings": settings,
+        "quiet_status": get_quiet_status(settings),
+    }
+
+
+@app.post("/api/user_settings")
+async def api_update_user_settings(payload: dict):
+    settings = save_user_settings(payload.get("settings") if "settings" in payload else payload)
+    quiet_status = get_quiet_status(settings)
+    await broadcast_to_apps({
+        "type": "settings_state",
+        "settings": settings,
+        "quiet_status": quiet_status,
+    })
+    return {
+        "ok": True,
+        "settings": settings,
+        "quiet_status": quiet_status,
+    }
+
+
 @app.websocket("/ws/app")
 async def app_endpoint(websocket: WebSocket):
     """Mobile H5 entry: receive live ESP32 sensor telemetry."""
@@ -1000,6 +1111,8 @@ async def app_endpoint(websocket: WebSocket):
         "type": "app_hello",
         "esp32_connected": bool(esp32_clients),
         "latest": latest_sensor_data,
+        "settings": load_user_settings(),
+        "quiet_status": get_quiet_status(),
     }, ensure_ascii=False))
     await request_sensor_data()
 
@@ -1014,6 +1127,24 @@ async def app_endpoint(websocket: WebSocket):
             msg_type = data.get("type")
             if msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
+            elif msg_type == "settings_get":
+                settings = load_user_settings()
+                await websocket.send_text(json.dumps({
+                    "type": "settings_state",
+                    "settings": settings,
+                    "quiet_status": get_quiet_status(settings),
+                }, ensure_ascii=False))
+            elif msg_type == "settings_update":
+                settings = save_user_settings(data.get("settings") or {})
+                quiet_status = get_quiet_status(settings)
+                payload = {
+                    "type": "settings_state",
+                    "ok": True,
+                    "settings": settings,
+                    "quiet_status": quiet_status,
+                }
+                await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                await broadcast_to_apps(payload)
             elif msg_type == "read_sensors":
                 ok = await request_sensor_data(data.get("client_id"))
                 await websocket.send_text(json.dumps({
@@ -1026,6 +1157,7 @@ async def app_endpoint(websocket: WebSocket):
                     websocket,
                     str(data.get("text") or ""),
                     str(data.get("request_id") or ""),
+                    str(data.get("session_id") or app_id),
                 )
             elif msg_type == "pillow_cmd":
                 target = pick_esp32_client(data.get("client_id"))
@@ -1035,13 +1167,42 @@ async def app_endpoint(websocket: WebSocket):
                     "duration_sec": int(data.get("duration_sec") or 3),
                 }
                 if data.get("target_kpa") is not None:
-                    payload["target_kpa"] = float(data.get("target_kpa"))
+                    target_value = float(data.get("target_kpa"))
+                    if math.isfinite(target_value):
+                        payload["target_kpa"] = max(0.0, min(10.0, target_value))
                 ok = await send_json_to_esp32(target, payload) if target else False
                 await websocket.send_text(json.dumps({
                     "type": "command_ack",
                     "target": "pillow",
                     "ok": ok,
                 }, ensure_ascii=False))
+            elif msg_type == "led_cmd":
+                target = pick_esp32_client(data.get("client_id"))
+                payload = {
+                    "type": "led_cmd",
+                    "action": data.get("action") or "set",
+                }
+                for key in (
+                    "enabled", "on", "brightness", "brightness_pct",
+                    "mode", "color", "speed_pct", "duration_sec",
+                    "r", "g", "b",
+                ):
+                    if key in data:
+                        payload[key] = data.get(key)
+                ok = await send_json_to_esp32(target, payload) if target else False
+                ack = {
+                    "type": "command_ack",
+                    "target": "led",
+                    "ok": ok,
+                    "enabled": payload.get("enabled", payload.get("on")),
+                    "brightness": payload.get("brightness"),
+                    "brightness_pct": payload.get("brightness_pct"),
+                    "mode": payload.get("mode"),
+                    "color": payload.get("color"),
+                    "speed_pct": payload.get("speed_pct"),
+                    "duration_sec": payload.get("duration_sec"),
+                }
+                await websocket.send_text(json.dumps(ack, ensure_ascii=False))
     except WebSocketDisconnect:
         print(f"[APP] disconnected ({app_id})")
     finally:

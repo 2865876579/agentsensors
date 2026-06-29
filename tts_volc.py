@@ -5,13 +5,20 @@ X-Api-Key 鉴权，seed-tts-2.0-expressive
 import re
 import base64
 import json
+import uuid
 from collections.abc import AsyncIterator
 
 import aiohttp
 import miniaudio
 import opuslib
 
-from config import VOLC_API_KEY, VOLC_VOICE_TYPE, VOLC_TTS_SPEED, VOLC_TTS_VOLUME
+from config import (
+    VOLC_API_KEY,
+    VOLC_RESOURCE_ID,
+    VOLC_VOICE_TYPE,
+    VOLC_TTS_SPEED,
+    VOLC_TTS_VOLUME,
+)
 
 URL = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
 MODEL = "seed-tts-2.0-expressive"
@@ -36,15 +43,15 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
         _enc = opuslib.Encoder(SAMPLE_RATE, CHANNELS, opuslib.APPLICATION_VOIP)
 
     headers = {
-        "Content-Type": "application/json",
+        "Content-Type": "application/json; charset=utf-8",
         "X-Api-Key": VOLC_API_KEY,
-        "X-Api-Resource-Id": "seed-tts-2.0",
+        "X-Api-Resource-Id": VOLC_RESOURCE_ID,
+        "X-Api-Request-Id": f"esp32-tts-{uuid.uuid4()}",
     }
     body = {
         "user": {"uid": "esp32"},
         "req_params": {
             "text": text,
-            "model": MODEL,
             "speaker": VOLC_VOICE_TYPE,
             "audio_params": {
                 "format": "mp3",
@@ -52,7 +59,6 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
                 "speech_rate": VOLC_TTS_SPEED,
                 "loudness_rate": VOLC_TTS_VOLUME,
             },
-            "additions": json.dumps({"silence_duration": 300}),
         },
     }
 
@@ -66,9 +72,9 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
                     err = await resp.text()
                     print(f"[VolcTTS] HTTP {resp.status}: {err[:300]}")
                     return
-                text = await resp.text()
+                response_text = await resp.text()
                 mp3_chunks = []
-                for line in text.splitlines():
+                for line in response_text.splitlines():
                     line = line.strip()
                     if not line:
                         continue
@@ -76,11 +82,19 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    audio_b64 = obj.get("data", "")
+
+                    code = obj.get("code")
+                    if code not in (None, 0, 20000000):
+                        print(f"[VolcTTS] code={code} message={obj.get('message', '')}")
+                        return
+
+                    audio_b64 = obj.get("data") or obj.get("audio") or ""
+                    if isinstance(audio_b64, dict):
+                        audio_b64 = audio_b64.get("data") or audio_b64.get("audio") or ""
                     if audio_b64:
                         mp3_chunks.append(base64.b64decode(audio_b64))
                 if not mp3_chunks:
-                    print("[VolcTTS] 返回空音频")
+                    print(f"[VolcTTS] empty audio, response={response_text[:300]}")
                     return
                 mp3_data = b"".join(mp3_chunks)
 
