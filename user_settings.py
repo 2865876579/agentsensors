@@ -52,6 +52,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "block_ai_screen": True,
         "block_ai_pc_agent": True,
         "allow_gentle_pillow_adjust": True,
+        "allow_sleep_environment_control": True,
         "alert_method": "phone_only",
     },
     "memory": [
@@ -141,6 +142,7 @@ def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
         "block_ai_screen": _to_bool(rules.get("block_ai_screen"), True),
         "block_ai_pc_agent": _to_bool(rules.get("block_ai_pc_agent"), True),
         "allow_gentle_pillow_adjust": _to_bool(rules.get("allow_gentle_pillow_adjust"), True),
+        "allow_sleep_environment_control": _to_bool(rules.get("allow_sleep_environment_control"), True),
         "alert_method": str(rules.get("alert_method") or "phone_only")[:40],
     }
 
@@ -266,7 +268,8 @@ def build_ai_context_prompt(settings: dict[str, Any] | None = None) -> str:
 - {quiet_text}
 - 这些设置是用户在 App 中保存的永久机制，不是临时聊天上下文。
 - 睡眠勿扰时间段内，你必须低打扰：不要主动语音播报、不要主动亮屏、不要主动开灯/闪灯、不要主动让 PC Agent 做有打扰感的任务。
-- 睡眠勿扰时间段内，只允许安静解释、手机端文字回复、静默记录，以及必要且轻微的枕头调节。
+- 睡眠勿扰时间段内，可以静默处理：手机端文字回复、静默记录、必要且轻微的枕头调节，以及根据传感器数据静默调节风扇、加湿器等环境外设。
+- 环境外设调节必须低频、低打扰、有明确环境依据；不要为了展示效果反复切换。
 - 即使你认为某个动作有帮助，也必须服从云端策略拦截；不能用文字承诺已经执行被拦截的动作。
 """.strip()
 
@@ -287,6 +290,20 @@ def guard_ai_action(action_type: str, **kwargs: Any) -> dict[str, Any]:
             return {
                 "allowed": False,
                 "reason": "现在是睡眠勿扰时间，我不会主动开灯、闪灯或改变灯效，以免打扰睡眠。需要开灯请在 App 手动控制。",
+                "overrides": {},
+                "quiet_status": quiet_status,
+            }
+
+    if action_type == "ir_device":
+        is_off = action in {"off", "close", "shutdown"}
+        device = str(kwargs.get("device") or "").lower()
+        sleep_env_devices = {"fan", "humidifier", "humid"}
+        if not is_off and device in sleep_env_devices and rules.get("allow_sleep_environment_control"):
+            return {"allowed": True, "reason": "", "overrides": {}, "quiet_status": quiet_status}
+        if not is_off:
+            return {
+                "allowed": False,
+                "reason": "现在是睡眠勿扰时间，当前设置不允许 AI 主动控制这个外设。需要操作请在 App 手动控制，或打开“允许睡眠自动调节环境”。",
                 "overrides": {},
                 "quiet_status": quiet_status,
             }

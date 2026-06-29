@@ -39,6 +39,7 @@ from llm_deepseek import (
     set_pc_command_callback,
     set_pillow_callback,
     set_led_callback,
+    set_ir_device_callback,
     set_read_sensors_callback,
 )
 from tts_volc import synthesize
@@ -164,6 +165,27 @@ async def _led_cb(action: str, mode: str, color: str, brightness_pct, speed_pct,
     return "已发送灯带指令" if ok else "发送失败"
 
 
+async def _ir_device_cb(device: str, action: str, client_id: str, turn_id: int) -> str:
+    """LLM 调 ir_device_control 工具时：转发红外设备开关命令到 ESP32。"""
+    target = pick_esp32_client(client_id)
+    if not target:
+        return "ESP32 未连接"
+
+    device = (device or "").strip().lower()
+    action = (action or "").strip().lower()
+    if device not in {"fan", "humidifier"}:
+        return "只支持控制风扇和加湿器"
+    if action not in {"on", "off", "toggle"}:
+        return "红外动作只支持 on/off/toggle"
+
+    ok = await send_json_to_esp32(target, {
+        "type": "ir_cmd",
+        "device": device,
+        "action": action,
+    })
+    return "已发送红外设备指令" if ok else "发送失败"
+
+
 async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
     """LLM 调 read_sensors 工具时：发 WebSocket 命令到 ESP32 并等待传感器数据。"""
     target = pick_esp32_client(client_id)
@@ -190,6 +212,7 @@ async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
 set_pc_command_callback(_pc_command_cb)
 set_pillow_callback(_pillow_cb)
 set_led_callback(_led_cb)
+set_ir_device_callback(_ir_device_cb)
 set_read_sensors_callback(_read_sensors_cb)
 
 
@@ -1024,6 +1047,24 @@ async def esp32_endpoint(websocket: WebSocket):
                         "data": data,
                     })
 
+                elif msg_type == "ir_state":
+                    if latest_sensor_data is None:
+                        latest_sensor_data = {
+                            "received_at": time.time(),
+                            "client_id": client_id,
+                            "data": {},
+                        }
+                    latest_sensor_data["received_at"] = time.time()
+                    latest_sensor_data["client_id"] = client_id
+                    sensor_data = latest_sensor_data.setdefault("data", {})
+                    sensor_data["fan_on"] = bool(data.get("fan_on"))
+                    sensor_data["humidifier_on"] = bool(data.get("humidifier_on"))
+                    await broadcast_to_apps({
+                        "type": "ir_state",
+                        "esp32_connected": True,
+                        "data": data,
+                    })
+
                 elif msg_type == "ping":
                     await send_json_to_esp32(client_id, {"type": "pong"})
 
@@ -1203,6 +1244,27 @@ async def app_endpoint(websocket: WebSocket):
                     "duration_sec": payload.get("duration_sec"),
                 }
                 await websocket.send_text(json.dumps(ack, ensure_ascii=False))
+            elif msg_type == "ir_cmd":
+                target = pick_esp32_client(data.get("client_id"))
+                device = str(data.get("device") or "").strip().lower()
+                action = str(data.get("action") or "").strip().lower()
+                if device not in {"fan", "humidifier"}:
+                    ok = False
+                elif action not in {"on", "off", "toggle"}:
+                    ok = False
+                else:
+                    ok = await send_json_to_esp32(target, {
+                        "type": "ir_cmd",
+                        "device": device,
+                        "action": action,
+                    }) if target else False
+                await websocket.send_text(json.dumps({
+                    "type": "command_ack",
+                    "target": "ir",
+                    "device": device,
+                    "action": action,
+                    "ok": ok,
+                }, ensure_ascii=False))
     except WebSocketDisconnect:
         print(f"[APP] disconnected ({app_id})")
     finally:
