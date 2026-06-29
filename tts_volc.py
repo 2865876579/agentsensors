@@ -25,12 +25,38 @@ MODEL = "seed-tts-2.0-expressive"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAME_SAMPLES = 960
+FADE_SAMPLES = 160
+BOUNDARY_SILENCE_SAMPLES = 160
 
 _EMOJI_RE = re.compile(
     "[\U0001F300-\U0001FFFF\U0000FE00-\U0000FE0F\U0000200D\U0001F1E0-\U0001F1FF"
     "☀-➿⭐⭕✂✅✨❄❇❌❓-❗❤➕-➗⤴⤵▪▫▶◀◻-◾☕☺♈-♓♻♿⚓⚠⚡⚪⚫⚽⚾⛄⛅⛔⛪⛲⛳⛵⛺⛽]",
     re.UNICODE,
 )
+
+
+def _fade_pcm16_mono(pcm: bytes) -> bytes:
+    sample_count = len(pcm) // 2
+    fade = min(FADE_SAMPLES, sample_count // 2)
+    if fade <= 1:
+        return pcm
+
+    data = bytearray(pcm)
+    for i in range(fade):
+        in_gain = i / fade
+        out_gain = (fade - i - 1) / fade
+
+        start = i * 2
+        start_val = int.from_bytes(data[start:start + 2], "little", signed=True)
+        start_val = int(start_val * in_gain)
+        data[start:start + 2] = int(start_val).to_bytes(2, "little", signed=True)
+
+        end = (sample_count - 1 - i) * 2
+        end_val = int.from_bytes(data[end:end + 2], "little", signed=True)
+        end_val = int(end_val * out_gain)
+        data[end:end + 2] = int(end_val).to_bytes(2, "little", signed=True)
+
+    return bytes(data)
 
 
 async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
@@ -104,7 +130,8 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
             nchannels=CHANNELS,
             sample_rate=SAMPLE_RATE,
         )
-        pcm = bytes(decoded.samples)
+        pcm = _fade_pcm16_mono(bytes(decoded.samples))
+        pcm += b"\x00\x00" * BOUNDARY_SILENCE_SAMPLES
 
         total_samples = len(pcm) // 2
         pos = 0
