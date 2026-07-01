@@ -59,9 +59,62 @@ def _fade_pcm16_mono(pcm: bytes) -> bytes:
     return bytes(data)
 
 
+def _mask_value(value: str) -> str:
+    if not value:
+        return "(empty)"
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _extract_error_details(raw_text: str) -> tuple[str | None, str | None]:
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None, None
+
+    header = payload.get("header") if isinstance(payload, dict) else None
+    if isinstance(header, dict):
+        code = header.get("code")
+        message = header.get("message")
+        return str(code) if code is not None else None, message
+
+    code = payload.get("code") if isinstance(payload, dict) else None
+    message = payload.get("message") if isinstance(payload, dict) else None
+    return str(code) if code is not None else None, message
+
+
+def _log_http_error(status: int, raw_text: str) -> None:
+    code, message = _extract_error_details(raw_text)
+    detail = f"HTTP {status}"
+    if code:
+        detail += f" code={code}"
+    if message:
+        detail += f" message={message}"
+    print(f"[VolcTTS] {detail}")
+
+    if code == "45000010" or "Invalid X-Api-Key" in raw_text:
+        print(
+            "[VolcTTS] 当前走的是新版 API Key 鉴权，但服务端明确返回 Invalid X-Api-Key。"
+        )
+        print(
+            "[VolcTTS] 这个接口需要豆包语音/方舟语音模型页面生成的专属 API Key，"
+            "不是 Access Key/Secret，也不是其他产品的普通 API Key。"
+        )
+        print(
+            f"[VolcTTS] resource_id={VOLC_RESOURCE_ID} voice={VOLC_VOICE_TYPE} "
+            f"api_key={_mask_value(VOLC_API_KEY)}"
+        )
+    else:
+        print(f"[VolcTTS] raw={raw_text[:300]}")
+
+
 async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
     text = _EMOJI_RE.sub("", text).strip()
     if not text:
+        return
+    if not VOLC_API_KEY:
+        print("[VolcTTS] 未配置 VOLC_API_KEY")
         return
 
     _enc = encoder
@@ -69,6 +122,7 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
         _enc = opuslib.Encoder(SAMPLE_RATE, CHANNELS, opuslib.APPLICATION_VOIP)
 
     headers = {
+        "Connection": "keep-alive",
         "Content-Type": "application/json; charset=utf-8",
         "X-Api-Key": VOLC_API_KEY,
         "X-Api-Resource-Id": VOLC_RESOURCE_ID,
@@ -90,13 +144,16 @@ async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
 
     try:
         async with aiohttp.ClientSession() as session:
+            payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
             async with session.post(
-                URL, headers=headers, json=body,
+                URL,
+                headers=headers,
+                data=payload,
                 timeout=aiohttp.ClientTimeout(total=20)
             ) as resp:
                 if resp.status != 200:
                     err = await resp.text()
-                    print(f"[VolcTTS] HTTP {resp.status}: {err[:300]}")
+                    _log_http_error(resp.status, err)
                     return
                 response_text = await resp.text()
                 mp3_chunks = []

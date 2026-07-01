@@ -225,6 +225,57 @@ def get_quiet_status(settings: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def get_upcoming_quiet_period(
+    settings: dict[str, Any] | None = None,
+    within_minutes: int = 10,
+) -> dict[str, Any]:
+    settings = settings or load_user_settings()
+    now = _now()
+    now_min = now.hour * 60 + now.minute
+    best_period = None
+    best_delta = None
+    best_start = None
+
+    for period in settings.get("quiet_periods", []):
+        if not period.get("enabled"):
+            continue
+        if _period_active(now_min, period["start"], period["end"]):
+            continue
+
+        start_min = _minutes(period["start"])
+        delta = (start_min - now_min) % (24 * 60)
+        if delta > within_minutes:
+            continue
+
+        start_at = now.replace(
+            hour=start_min // 60,
+            minute=start_min % 60,
+            second=0,
+            microsecond=0,
+        )
+        if start_at <= now:
+            start_at += timedelta(days=1)
+
+        if best_delta is None or delta < best_delta:
+            best_period = period
+            best_delta = delta
+            best_start = start_at
+
+    return {
+        "active": best_period is not None,
+        "period": best_period,
+        "minutes_until": best_delta,
+        "start_at": best_start.isoformat(timespec="seconds") if best_start else None,
+        "window_key": (
+            f"{best_period.get('name', 'quiet')}:{best_start.strftime('%Y-%m-%d %H:%M')}"
+            if best_period and best_start
+            else ""
+        ),
+        "now": now.isoformat(timespec="seconds"),
+        "timezone": TIMEZONE,
+    }
+
+
 def is_ai_voice_blocked(settings: dict[str, Any] | None = None) -> bool:
     settings = settings or load_user_settings()
     status = get_quiet_status(settings)
@@ -322,7 +373,7 @@ def guard_ai_action(action_type: str, **kwargs: Any) -> dict[str, Any]:
         if kwargs.get("target_kpa") is not None:
             return {
                 "allowed": False,
-                "reason": "现在是睡眠勿扰时间，我不会主动做目标气压的大幅调整。需要调整枕头请在 App 手动控制。",
+                "reason": "现在是睡眠勿扰时间，我不会主动做目标压力的大幅调整。需要调整枕头请在 App 手动控制。",
                 "overrides": {},
                 "quiet_status": quiet_status,
             }

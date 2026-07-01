@@ -222,6 +222,128 @@ def _handle_get_current_time(action: str, target: str = "", timezone_str: str = 
 
 # ── 工具定义 ────────────────────────────────────────────────
 # 每个工具对应一个真实能力，description 要让模型能准确判断何时调用
+async def generate_automation_reply(
+    prompt: str,
+    max_tokens: int = 192,
+    fallback: str = "我在，先陪你一会儿。",
+) -> str:
+    system = (
+        "你是小安，一个低打扰的枕边生活助手。"
+        f"\n当前时间：{_get_time_string()}"
+        f"\n用户所在地：{LOCATION}"
+        f"\n{build_ai_context_prompt()}"
+        "\n\n任务：为设备自动化生成一句很短的中文语音播报。"
+        "\n要求：直接输出最终要说的话；自然、克制、像真实助手；不要提系统、传感器、阈值、ppm、lux、自动化；"
+        "不要括号，不要项目符号，不要解释。长度 10 到 28 个汉字。"
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max(max_tokens, 512),
+            temperature=0.8,
+        )
+        choice = response.choices[0]
+        message = choice.message
+        text = ((message.content or "").strip())
+        if text:
+            return text
+        reasoning = str(getattr(message, "reasoning_content", "") or "")
+        print(
+            "[LLM] generate_automation_reply empty content: "
+            f"finish_reason={getattr(choice, 'finish_reason', '')} "
+            f"reasoning={reasoning[:160]!r}"
+        )
+        return fallback
+    except Exception as exc:
+        print(f"[LLM] generate_automation_reply error: {exc}")
+        return fallback
+
+
+async def classify_pre_sleep_light_reply(user_text: str) -> str:
+    def parse_light_intent(text: str) -> str | None:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        upper = raw.upper()
+        if "OFF" in upper:
+            return "off"
+        if "DIM" in upper:
+            return "dim"
+        if "IGNORE" in upper:
+            return "ignore"
+
+        normalized = raw.replace(" ", "").replace("，", "").replace("。", "")
+        negative_words = (
+            "不用", "不需要", "不要", "别", "先不", "不用了", "算了",
+            "不用管", "不用处理", "不用动", "别动", "别关", "不要关", "不关",
+        )
+        dim_words = (
+            "调暗", "暗一点", "暗点", "降低亮度", "亮度低", "低一点", "弱一点",
+            "柔和一点", "小一点",
+        )
+        off_words = (
+            "关灯", "关掉", "关闭", "熄灯", "灭灯", "关了", "关上", "灯关",
+        )
+
+        if any(word in normalized for word in negative_words):
+            return "ignore"
+        if any(word in normalized for word in dim_words):
+            return "dim"
+        if any(word in normalized for word in off_words):
+            return "off"
+        return None
+
+    system = (
+        "你是一个严格的分类器。"
+        "用户刚收到一句睡前灯光询问，现在请判断用户回复更接近哪一类："
+        "OFF=关灯，DIM=调暗一点，IGNORE=不用处理、拒绝或听不出来。"
+        "只能输出 OFF、DIM、IGNORE 三者之一，不要输出别的内容。"
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_text},
+            ],
+            max_tokens=128,
+            temperature=0,
+        )
+        choice = response.choices[0]
+        message = choice.message
+        text = ((message.content or "").strip())
+        intent = parse_light_intent(text)
+        if intent:
+            return intent
+        fallback_intent = parse_light_intent(user_text)
+        if fallback_intent:
+            print(
+                "[LLM] classify_pre_sleep_light_reply fallback from user text: "
+                f"finish_reason={getattr(choice, 'finish_reason', '')} "
+                f"content={text[:80]!r}"
+            )
+            return fallback_intent
+        reasoning = str(getattr(message, "reasoning_content", "") or "")
+        intent = parse_light_intent(reasoning)
+        if intent:
+            print(
+                "[LLM] classify_pre_sleep_light_reply fallback from reasoning: "
+                f"finish_reason={getattr(choice, 'finish_reason', '')} "
+                f"reasoning={reasoning[:80]!r}"
+            )
+            return intent
+    except Exception as exc:
+        print(f"[LLM] classify_pre_sleep_light_reply error: {exc}")
+        fallback_intent = parse_light_intent(user_text)
+        if fallback_intent:
+            return fallback_intent
+    return "ignore"
+
+
 TOOLS = [
     {
         "type": "function",
@@ -338,9 +460,9 @@ TOOLS = [
         "function": {
             "name": "pillow_control",
             "description": (
-                "控制智能枕头硬件（气泵+泄气阀）。★ 所有操作必须用 target_kpa 气压值精确控制，禁止用 duration_sec。\n"
+                "控制智能枕头硬件（气泵+泄气阀）。★ 所有操作必须用 target_kpa 枕头压力值精确控制，禁止用 duration_sec。\n"
                 "工作范围 0-10 kPa。用法：\n"
-                "1. 先调 read_sensors 获取当前气压 current_kpa\n"
+                "1. 先调 read_sensors 获取当前枕头压力 current_kpa\n"
                 "2. 根据用户意图计算 target_kpa：\n"
                 "   - \"充到X千帕/X帕\" → target_kpa=精确值\n"
                 "3. ★★★ 回复时永远不要提\"到X千帕\"\"调到X\"之类的数字，只说\"帮你调高了\"\"放低了些\"等模糊话术\n"
@@ -363,7 +485,7 @@ TOOLS = [
                     },
                     "target_kpa": {
                         "type": "number", "minimum": 0.0, "maximum": 10.0,
-                        "description": "目标气压kPa。用户给出数字时必填（如'充到3000帕'=3.0, '放到1000帕'=1.0）。填了这个就不用填duration_sec，泵会自动边充/放边读传感器到位即停"
+                        "description": "目标枕头压力kPa。用户给出数字时必填（如'充到3000帕'=3.0, '放到1000帕'=1.0）。填了这个就不用填duration_sec，泵会自动边充/放边读传感器到位即停"
                     },
                 },
                 "required": ["action"],
@@ -453,7 +575,7 @@ TOOLS = [
         "function": {
             "name": "read_sensors",
             "description": (
-                "读取智能枕头所有传感器数据：空气质量(MQ-135)、气压(MCP5010DP)、"
+                "读取智能枕头所有传感器数据：空气质量(MQ-135)、枕头压力(MCP5010DP)、"
                 "4路压力分布(FSR402)、温度湿度(SHT31)、光照强度(BH1750)。"
                 "适用于用户问'枕头状态''温度多少''压力分布'等问题。"
             ),

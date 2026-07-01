@@ -36,6 +36,8 @@ from config import SERVER_HOST, SERVER_PORT
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
     chat_stream,
+    classify_pre_sleep_light_reply,
+    generate_automation_reply,
     set_pc_command_callback,
     set_pillow_callback,
     set_led_callback,
@@ -46,6 +48,7 @@ from tts_volc import synthesize
 from web_search import search_web  # 搜索工具，供后续 function calling 工具接入时使用
 from user_settings import (
     get_quiet_status,
+    get_upcoming_quiet_period,
     is_ai_screen_blocked,
     is_ai_voice_blocked,
     load_user_settings,
@@ -57,6 +60,7 @@ APP_VERSION = "xiaozhi_realtime_v5"
 
 WAKE_TRIGGER_TEXT = "__wake__"
 WAKE_REPLY_TEXT = "我在，你说。"
+SLEEP_GREETING_TRIGGER_TEXT = "用户刚刚躺下了，请温柔地主动问候一句"
 EXIT_REPLY_TEXT = "好的，再见小安。"
 EXIT_PHRASES = (
     "再见小安",
@@ -90,6 +94,20 @@ app_chat_histories: dict[str, list[dict]] = {}
 latest_sensor_data: dict | None = None
 sensor_poll_task: asyncio.Task | None = None
 SENSOR_POLL_INTERVAL_SEC = 2.0
+device_tts_busy_until: dict[str, float] = {}
+TTS_PLAYBACK_COOLDOWN_SEC = 4.0
+
+PRE_SLEEP_WINDOW_MINUTES = 10
+SLEEP_GREETING_WINDOW_MINUTES = 180
+PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 2.0
+PRE_SLEEP_LIGHT_THRESHOLD_LUX = 140.0
+PRE_SLEEP_REPLY_TIMEOUT_SEC = 30.0
+AIR_BAD_PPM_THRESHOLD = 2.0
+AIR_BAD_RESET_PPM = 1.5
+DRY_HUMIDITY_THRESHOLD = 54.0
+DRY_HUMIDITY_RESET_PCT = 55.0
+
+automation_states: dict[str, dict] = {}
 
 
 async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int) -> str:
@@ -125,7 +143,7 @@ async def _pillow_cb(action: str, duration_sec: int, client_id: str, turn_id: in
     if target_kpa is not None:
         target_value = float(target_kpa)
         if not math.isfinite(target_value):
-            return "目标气压无效"
+            return "目标压力无效"
         payload["target_kpa"] = max(0.0, min(10.0, target_value))
     ok = await send_json_to_esp32(target, payload)
     return "已发送枕头指令" if ok else "发送失败"
@@ -221,6 +239,10 @@ def is_exit_phrase(text: str) -> bool:
     return any(phrase in normalized for phrase in EXIT_PHRASES)
 
 
+def is_sleep_greeting_trigger(text: str) -> bool:
+    return str(text or "").strip() == SLEEP_GREETING_TRIGGER_TEXT
+
+
 async def send_json_to_esp32(client_id: str, payload: dict) -> bool:
     """串行发送一条 JSON 消息到指定 ESP32，避免多任务并发写同一 WebSocket。"""
     websocket = esp32_clients.get(client_id)
@@ -259,7 +281,14 @@ async def send_tts_state_to_esp32(
         payload["turn_id"] = turn_id
     if text is not None:
         payload["text"] = text
-    return await send_json_to_esp32(client_id, payload)
+    ok = await send_json_to_esp32(client_id, payload)
+    if ok:
+        now = time.time()
+        if state == "start":
+            device_tts_busy_until[client_id] = now + 60.0
+        elif state == "stop":
+            device_tts_busy_until[client_id] = now + TTS_PLAYBACK_COOLDOWN_SEC
+    return ok
 
 
 async def send_tts_audio_frames_to_esp32(
@@ -399,10 +428,10 @@ async def request_sensor_data(client_id: str | None = None) -> bool:
 
 
 async def sensor_poll_loop() -> None:
-    """Poll ESP32 only while at least one mobile H5 client is connected."""
+    """Keep sensor data fresh for both H5 and cloud automations."""
     while True:
         try:
-            if app_clients:
+            if esp32_clients:
                 await request_sensor_data()
         except Exception as e:
             print(f"[APP] sensor poll error: {e}")
@@ -413,6 +442,346 @@ def ensure_sensor_poll_task() -> None:
     global sensor_poll_task
     if sensor_poll_task is None or sensor_poll_task.done():
         sensor_poll_task = asyncio.create_task(sensor_poll_loop())
+
+
+def _get_automation_state(client_id: str) -> dict:
+    state = automation_states.setdefault(
+        client_id,
+        {
+            "pending_light_prompt": None,
+            "last_pre_sleep_prompt_key": "",
+            "last_sleep_greeting_day": "",
+            "fan_alarm_active": False,
+            "humidifier_alarm_active": False,
+            "worker_task": None,
+        },
+    )
+    pending = state.get("pending_light_prompt")
+    if pending and float(pending.get("expires_at") or 0) <= time.time():
+        state["pending_light_prompt"] = None
+    return state
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isfinite(result):
+        return result
+    return default
+
+
+def _is_user_on_pillow(sensor_payload: dict) -> bool:
+    for item in sensor_payload.get("fsr") or []:
+        if isinstance(item, dict) and item.get("valid") is not False:
+            if _safe_float(item.get("n")) >= PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N:
+                return True
+    return False
+
+
+def _update_cached_switch_state(client_id: str, key: str, value) -> None:
+    global latest_sensor_data
+    if latest_sensor_data and latest_sensor_data.get("client_id") == client_id:
+        sensor_data = latest_sensor_data.setdefault("data", {})
+        sensor_data[key] = value
+
+
+def _dialog_busy(client_id: str) -> bool:
+    if time.time() < float(device_tts_busy_until.get(client_id) or 0):
+        return True
+    session = esp32_sessions.get(client_id) or {}
+    active_task = session.get("active_task")
+    if active_task and not active_task.done():
+        return True
+    return bool(session.get("incoming_audio"))
+
+
+async def send_screen_status(client_id: str, text: str, *, event: str = "") -> bool:
+    text = str(text or "").strip()
+    if not text:
+        return False
+    payload = {"type": "screen_status", "msg": text}
+    if event:
+        payload["event"] = event
+    ok = await send_json_to_esp32(client_id, payload) if client_id else False
+    await broadcast_to_apps({
+        "type": "automation_status",
+        "client_id": client_id,
+        "event": event,
+        "text": text,
+    })
+    return ok
+
+
+async def _emit_automation_notice(
+    client_id: str,
+    text: str,
+    *,
+    event: str,
+    allow_voice: bool,
+) -> bool:
+    await send_screen_status(client_id, text, event=event)
+    if not allow_voice:
+        return False
+    if _dialog_busy(client_id):
+        print(f"[AUTO] skip voice while dialog busy: {event}")
+        return False
+    return await send_tts_stream_to_esp32(client_id, text, source="automation")
+
+
+async def request_one_shot_listen(client_id: str, reason: str) -> bool:
+    return await send_json_to_esp32(client_id, {
+        "type": "listen_once",
+        "reason": reason,
+    })
+
+
+async def _apply_pre_sleep_light_action(client_id: str, action: str) -> bool:
+    if action == "off":
+        ok = await send_json_to_esp32(client_id, {"type": "led_cmd", "action": "off"})
+        if ok:
+            _update_cached_switch_state(client_id, "led_enabled", False)
+            _update_cached_switch_state(client_id, "led_brightness", 0)
+            _update_cached_switch_state(client_id, "led_brightness_pct", 0)
+        return ok
+
+    if action == "dim":
+        ok = await send_json_to_esp32(
+            client_id,
+            {
+                "type": "led_cmd",
+                "action": "set",
+                "mode": "solid",
+                "color": "warm",
+                "brightness_pct": 18,
+                "speed_pct": 20,
+            },
+        )
+        if ok:
+            _update_cached_switch_state(client_id, "led_enabled", True)
+            _update_cached_switch_state(client_id, "led_brightness_pct", 18)
+            _update_cached_switch_state(client_id, "led_mode", "solid")
+            _update_cached_switch_state(client_id, "led_color", "warm")
+        return ok
+
+    return False
+
+
+async def _consume_pre_sleep_light_reply(
+    client_id: str,
+    user_text: str,
+    *,
+    allow_voice: bool,
+) -> str | None:
+    state = _get_automation_state(client_id)
+    pending = state.get("pending_light_prompt")
+    if not pending:
+        return None
+
+    state["pending_light_prompt"] = None
+    action = await classify_pre_sleep_light_reply(user_text)
+
+    if action == "off":
+        ok = await _apply_pre_sleep_light_action(client_id, "off")
+        reply = "已帮你关掉灯带。" if ok else "我收到关灯请求了，但灯带暂时没有响应。"
+    elif action == "dim":
+        ok = await _apply_pre_sleep_light_action(client_id, "dim")
+        reply = "已把灯光调暗一点。" if ok else "我收到调暗请求了，但灯带暂时没有响应。"
+    else:
+        reply = "好，那我先不动灯光。"
+
+    await _emit_automation_notice(
+        client_id,
+        reply,
+        event="pre_sleep_light_reply",
+        allow_voice=allow_voice,
+    )
+    return reply
+
+
+async def _maybe_prompt_pre_sleep_light(client_id: str, sensor_payload: dict, settings: dict) -> None:
+    upcoming = get_upcoming_quiet_period(settings, PRE_SLEEP_WINDOW_MINUTES)
+    quiet_status = get_quiet_status(settings)
+    in_sleep_period = bool(quiet_status.get("active"))
+    if not upcoming.get("active") and not in_sleep_period:
+        return
+
+    state = _get_automation_state(client_id)
+    if upcoming.get("active"):
+        window_key = str(upcoming.get("window_key") or "")
+        reply = "快到睡觉时间了，房间光线有点亮，要我帮你关灯或调暗吗？"
+    else:
+        period = quiet_status.get("period") or {}
+        now_key = str(quiet_status.get("now") or "")[:10]
+        period_name = str(period.get("name") or "sleep")
+        window_key = f"sleep-light:{period_name}:{now_key}"
+        reply = "你已经躺下了，房间光线偏亮，要我帮你关灯或调暗吗？"
+
+    if window_key and state.get("last_pre_sleep_prompt_key") == window_key:
+        return
+    if state.get("pending_light_prompt"):
+        return
+    if _dialog_busy(client_id):
+        return
+
+    light_lux = _safe_float(sensor_payload.get("light_lux"))
+    if not _is_user_on_pillow(sensor_payload):
+        return
+    if light_lux < PRE_SLEEP_LIGHT_THRESHOLD_LUX:
+        return
+
+    state["last_pre_sleep_prompt_key"] = window_key or f"pre-sleep:{int(time.time())}"
+    state["pending_light_prompt"] = {
+        "expires_at": time.time() + PRE_SLEEP_REPLY_TIMEOUT_SEC,
+        "window_key": window_key,
+    }
+    allow_voice = not is_ai_voice_blocked(settings)
+    voice_sent = await _emit_automation_notice(
+        client_id,
+        reply,
+        event="pre_sleep_light_prompt",
+        allow_voice=allow_voice,
+    )
+    if voice_sent:
+        await request_one_shot_listen(client_id, "pre_sleep_light_reply")
+
+
+async def _maybe_auto_control_environment(client_id: str, sensor_payload: dict, settings: dict) -> None:
+    state = _get_automation_state(client_id)
+    allow_voice = not is_ai_voice_blocked(settings)
+
+    if sensor_payload.get("mq135_valid"):
+        ppm = _safe_float(sensor_payload.get("mq135_ppm"))
+        if ppm >= AIR_BAD_PPM_THRESHOLD and not state.get("fan_alarm_active"):
+            state["fan_alarm_active"] = True
+            await send_json_to_esp32(client_id, {
+                "type": "ir_cmd",
+                "device": "fan",
+                "action": "on",
+            })
+            _update_cached_switch_state(client_id, "fan_on", True)
+            reply = await generate_automation_reply(
+                f"空气质量已经偏差，我准备打开风扇处理一下。当前读数大约是 {ppm:.2f}。"
+                "请用一句自然的话告诉用户你已经在处理空气问题。"
+            )
+            await _emit_automation_notice(
+                client_id,
+                reply,
+                event="auto_fan_on",
+                allow_voice=allow_voice,
+            )
+        elif ppm < AIR_BAD_RESET_PPM and state.get("fan_alarm_active"):
+            state["fan_alarm_active"] = False
+            await send_json_to_esp32(client_id, {
+                "type": "ir_cmd",
+                "device": "fan",
+                "action": "off",
+            })
+            _update_cached_switch_state(client_id, "fan_on", False)
+            reply = await generate_automation_reply(
+                f"空气已经恢复正常，我准备把风扇关掉。当前读数大约是 {ppm:.2f}。"
+                "请用一句自然的话告诉用户风扇已经关掉。"
+            )
+            await _emit_automation_notice(
+                client_id,
+                reply,
+                event="auto_fan_off",
+                allow_voice=allow_voice,
+            )
+        elif ppm < AIR_BAD_RESET_PPM:
+            state["fan_alarm_active"] = False
+
+    if sensor_payload.get("env_valid"):
+        humidity = _safe_float(sensor_payload.get("humidity_pct"))
+        if humidity <= DRY_HUMIDITY_THRESHOLD and not state.get("humidifier_alarm_active"):
+            state["humidifier_alarm_active"] = True
+            await send_json_to_esp32(client_id, {
+                "type": "ir_cmd",
+                "device": "humidifier",
+                "action": "on",
+            })
+            _update_cached_switch_state(client_id, "humidifier_on", True)
+            reply = await generate_automation_reply(
+                f"环境开始偏干了，我准备打开加湿器。当前湿度大约是 {humidity:.1f}% 。"
+                "请用一句自然的话告诉用户你已经在处理干燥问题。"
+            )
+            await _emit_automation_notice(
+                client_id,
+                reply,
+                event="auto_humidifier_on",
+                allow_voice=allow_voice,
+            )
+        elif humidity >= DRY_HUMIDITY_RESET_PCT and state.get("humidifier_alarm_active"):
+            state["humidifier_alarm_active"] = False
+            await send_json_to_esp32(client_id, {
+                "type": "ir_cmd",
+                "device": "humidifier",
+                "action": "off",
+            })
+            _update_cached_switch_state(client_id, "humidifier_on", False)
+            reply = await generate_automation_reply(
+                f"湿度已经回到合适范围，我准备把加湿器关掉。当前湿度大约是 {humidity:.1f}% 。"
+                "请用一句自然的话告诉用户加湿器已经关掉。"
+            )
+            await _emit_automation_notice(
+                client_id,
+                reply,
+                event="auto_humidifier_off",
+                allow_voice=allow_voice,
+            )
+        elif humidity >= DRY_HUMIDITY_RESET_PCT:
+            state["humidifier_alarm_active"] = False
+
+
+async def evaluate_sensor_automations(client_id: str, sensor_payload: dict) -> None:
+    if not client_id or not isinstance(sensor_payload, dict):
+        return
+    settings = load_user_settings()
+    _get_automation_state(client_id)
+    await _maybe_prompt_pre_sleep_light(client_id, sensor_payload, settings)
+    await _maybe_auto_control_environment(client_id, sensor_payload, settings)
+
+
+def schedule_sensor_automations(client_id: str, sensor_payload: dict) -> None:
+    state = _get_automation_state(client_id)
+    task = state.get("worker_task")
+    if task and not task.done():
+        return
+    state["worker_task"] = asyncio.create_task(
+        evaluate_sensor_automations(client_id, dict(sensor_payload or {}))
+    )
+
+
+async def handle_sleep_greeting_trigger(
+    client_id: str,
+    history: list[dict],
+    settings: dict,
+) -> None:
+    state = _get_automation_state(client_id)
+    quiet_status = get_quiet_status(settings)
+    day_key = str(quiet_status.get("now") or "")[:10]
+
+    if day_key and state.get("last_sleep_greeting_day") == day_key:
+        await send_json_to_esp32(client_id, {"type": "status"})
+        print(f"[就寝] 今日已主动问候过，跳过: {day_key}")
+        return
+
+    state["last_sleep_greeting_day"] = day_key
+    reply = await generate_automation_reply(
+        "压力传感器检测到用户刚刚躺下，这是今天第一次进入有人模式。"
+        "请用一句非常自然、低打扰的躺下关怀问候用户，像真实枕边助手。"
+        "不要提传感器、系统、检测、模式，也不要催促用户回答。",
+        fallback="躺好啦？我在这儿陪着你。",
+    )
+    reply = reply.strip() or "躺好啦？今天辛苦了，我在这儿陪着你。"
+
+    await send_screen_status(client_id, "状态：今日首次躺下，正在进行关怀问候。", event="sleep_greeting")
+    ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
+    if ok:
+        history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
+        history.append({"role": "assistant", "content": reply})
+        await request_one_shot_listen(client_id, "sleep_greeting_reply")
 
 
 def extract_search_query_from_url(url: str) -> str | None:
@@ -555,6 +924,35 @@ async def handle_app_chat_once(
     allow_device_tts = not is_ai_voice_blocked(settings)
     allow_device_status = not is_ai_screen_blocked(settings)
 
+    pending_reply = await _consume_pre_sleep_light_reply(
+        target,
+        user_text,
+        allow_voice=allow_device_tts,
+    )
+    if pending_reply is not None:
+        await send_app_message(websocket, {
+            "type": "app_chat_start",
+            "request_id": request_id,
+            "esp32_connected": True,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
+        })
+        await send_app_message(websocket, {
+            "type": "app_chat_delta",
+            "request_id": request_id,
+            "delta": pending_reply,
+            "text": pending_reply,
+        })
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": pending_reply,
+            "turn_id": 0,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
+        })
+        return
+
     turn_id = next_turn_id(target)
     await cancel_active_task(target)
     if allow_device_status:
@@ -677,6 +1075,19 @@ async def answer_user_text(client_id: str, text: str, history: list[dict], turn_
         await send_tts_stream_to_esp32(
             client_id, EXIT_REPLY_TEXT, turn_id=turn_id, end_dialog=True
         )
+        return
+
+    settings = load_user_settings()
+    if is_sleep_greeting_trigger(text):
+        await handle_sleep_greeting_trigger(client_id, history, settings)
+        return
+
+    pending_reply = await _consume_pre_sleep_light_reply(
+        client_id,
+        text,
+        allow_voice=not is_ai_voice_blocked(settings),
+    )
+    if pending_reply is not None:
         return
 
     # ★ xiaozhi 流式：chat_stream 自带 Function Calling，所有对话统一走流式
@@ -839,6 +1250,7 @@ async def esp32_endpoint(websocket: WebSocket):
     esp32_send_locks[client_id] = asyncio.Lock()
     esp32_sessions[client_id] = {"turn_id": 0}
     last_active_esp32_id = client_id
+    ensure_sensor_poll_task()
     history: list[dict] = []
     print(f"[ESP32] 已连接 ({client_id})")
 
@@ -1024,6 +1436,7 @@ async def esp32_endpoint(websocket: WebSocket):
                         if future and not future.done():
                             future.set_result(json.dumps(sensor_payload, ensure_ascii=False))
                             print(f"[ESP32] sensor_data resolved request_id={request_id}")
+                    schedule_sensor_automations(client_id, sensor_payload)
 
                 # ========== 心跳 ==========
                 elif msg_type == "pump_result":
