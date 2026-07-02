@@ -83,3 +83,9 @@ EMAIL_PASS = os.getenv("EMAIL_PASS", "")
 # ==================== 服务配置 ====================
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")  # 监听地址，0.0.0.0 表示所有网卡
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))  # 监听端口1
+
+# ==================== 网易云音乐配置 ====================
+# 登录 Cookie 放在 .env，不要写进代码仓库。
+NETEASE_COOKIE = os.getenv("NETEASE_COOKIE", "")
+NETEASE_BR = int(os.getenv("NETEASE_BR", "320000"))
+NETEASE_MAX_PLAY_SECONDS = int(os.getenv("NETEASE_MAX_PLAY_SECONDS", "360"))

@@ -36,6 +36,7 @@ from config import SERVER_HOST, SERVER_PORT
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
     chat_stream,
+    classify_music_request,
     classify_pre_sleep_light_reply,
     generate_automation_reply,
     set_pc_command_callback,
@@ -45,6 +46,7 @@ from llm_deepseek import (
     set_read_sensors_callback,
 )
 from tts_volc import synthesize
+from netease_music import find_playable_song, iter_song_opus_frames
 from web_search import search_web  # 搜索工具，供后续 function calling 工具接入时使用
 from user_settings import (
     get_quiet_status,
@@ -243,6 +245,37 @@ def is_sleep_greeting_trigger(text: str) -> bool:
     return str(text or "").strip() == SLEEP_GREETING_TRIGGER_TEXT
 
 
+async def drop_esp32_client(client_id: str, reason: str = "") -> None:
+    """Remove a stale ESP32 websocket so future commands target a healthy client."""
+    global last_active_esp32_id
+    websocket = esp32_clients.pop(client_id, None)
+    esp32_send_locks.pop(client_id, None)
+    session = esp32_sessions.pop(client_id, None) or {}
+    device_tts_busy_until.pop(client_id, None)
+
+    task = session.get("active_task")
+    current = asyncio.current_task()
+    if task and task is not current and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"[ESP32] stale task cleanup error: {exc}")
+
+    if websocket is not None:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+    if last_active_esp32_id == client_id:
+        last_active_esp32_id = pick_esp32_client()
+    if reason:
+        print(f"[ESP32] removed stale client {client_id}: {reason}")
+
+
 async def send_json_to_esp32(client_id: str, payload: dict) -> bool:
     """串行发送一条 JSON 消息到指定 ESP32，避免多任务并发写同一 WebSocket。"""
     websocket = esp32_clients.get(client_id)
@@ -250,9 +283,27 @@ async def send_json_to_esp32(client_id: str, payload: dict) -> bool:
     if websocket is None or lock is None:
         return False
 
-    async with lock:
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-    return True
+    try:
+        async with lock:
+            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        return True
+    except Exception as exc:
+        await drop_esp32_client(client_id, f"json send failed: {exc}")
+        return False
+
+
+async def send_bytes_to_esp32(client_id: str, frame: bytes) -> bool:
+    websocket = esp32_clients.get(client_id)
+    lock = esp32_send_locks.get(client_id)
+    if websocket is None or lock is None:
+        return False
+    try:
+        async with lock:
+            await websocket.send_bytes(frame)
+        return True
+    except Exception as exc:
+        await drop_esp32_client(client_id, f"bytes send failed: {exc}")
+        return False
 
 
 def session_id_of(client_id: str) -> str:
@@ -308,8 +359,8 @@ async def send_tts_audio_frames_to_esp32(
     async for frame in synthesize(text, encoder=encoder):
         if not frame:
             continue
-        async with lock:
-            await websocket.send_bytes(frame)
+        if not await send_bytes_to_esp32(client_id, frame):
+            return frame_count
         frame_count += 1
     return frame_count
 
@@ -321,6 +372,7 @@ async def send_tts_stream_to_esp32(
     source: str = "assistant",
     turn_id: int | None = None,
     end_dialog: bool = False,
+    wait_playback: bool = False,
 ) -> bool:
     """
     小安协议 TTS：
@@ -355,6 +407,155 @@ async def send_tts_stream_to_esp32(
         return False
 
     print(f"[TTS-send] 全部完成, {seq} 帧")
+    if wait_playback:
+        await asyncio.sleep(min(4.0, seq * 0.06 + 0.25))
+    return True
+
+
+async def send_music_frames_to_esp32(
+    client_id: str,
+    query: str,
+    *,
+    title: str = "",
+    artist: str = "",
+    kind: str = "",
+    source: str = "music",
+    turn_id: int | None = None,
+    wait_before_audio: asyncio.Task | None = None,
+) -> bool:
+    """Search NetEase Cloud Music and play it through the existing Opus pipeline."""
+    if client_id not in esp32_clients:
+        return False
+
+    query = (query or "").strip()
+    if not query:
+        return False
+
+    async def wait_preroll() -> None:
+        if wait_before_audio is None:
+            return
+        try:
+            await wait_before_audio
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[Music] preroll TTS failed: {exc}")
+
+    if kind == "artist" and artist:
+        search_label = f"{artist}的可播放歌曲"
+    elif title and artist:
+        search_label = f"{artist}的《{title}》"
+    else:
+        search_label = f"《{query}》"
+
+    await send_screen_status(client_id, f"状态：正在搜索{search_label}。", event="music_search")
+    try:
+        song = await find_playable_song(query, title=title, artist=artist, kind=kind)
+    except Exception as exc:
+        print(f"[Music] search failed: {exc}")
+        await send_screen_status(client_id, "状态：音乐搜索失败。", event="music_error")
+        await wait_preroll()
+        await send_tts_stream_to_esp32(
+            client_id,
+            "这首歌暂时没有找到可信的可播放版本。",
+            source=source,
+            turn_id=turn_id,
+        )
+        return False
+
+    if not song:
+        await send_screen_status(client_id, f"状态：没有找到{search_label}的可信可播放版本。", event="music_not_found")
+        if kind == "artist" and artist:
+            fail_text = f"网易云这边暂时拿不到{artist}的可信可播放歌曲，我先不乱放。"
+        elif title and artist:
+            fail_text = f"网易云这边暂时拿不到{artist}的《{title}》，我先不乱放。"
+        else:
+            fail_text = "这首歌我暂时拿不到可信的可播放版本，先不乱放。"
+        await wait_preroll()
+        await send_tts_stream_to_esp32(
+            client_id,
+            fail_text,
+            source=source,
+            turn_id=turn_id,
+        )
+        return False
+
+    print(f"[Music] play {song.label} id={song.id} br={song.br}")
+    await send_screen_status(client_id, f"状态：正在播放《{song.name}》。", event="music_play")
+    await wait_preroll()
+    if not await send_tts_state_to_esp32(client_id, "start", source=source, turn_id=turn_id):
+        return False
+
+    frame_count = 0
+    import opuslib as _opuslib
+    encoder = _opuslib.Encoder(OPUS_SAMPLE_RATE, OPUS_CHANNELS, _opuslib.APPLICATION_AUDIO)
+    try:
+        encoder.bitrate = 24000
+        encoder.complexity = 1
+    except Exception:
+        pass
+
+    try:
+        await send_tts_state_to_esp32(
+            client_id,
+            "sentence_start",
+            source=source,
+            turn_id=turn_id,
+            text=f"正在播放：{song.label}",
+        )
+        websocket = esp32_clients.get(client_id)
+        lock = esp32_send_locks.get(client_id)
+        if websocket is None or lock is None:
+            return False
+        async for frame in iter_song_opus_frames(song, encoder=encoder):
+            if not frame:
+                continue
+            if not await send_bytes_to_esp32(client_id, frame):
+                return frame_count > 0
+            frame_count += 1
+            await asyncio.sleep(0.055)
+    except asyncio.CancelledError:
+        print(f"[Music] cancelled: {song.label}")
+        raise
+    except Exception as exc:
+        print(f"[Music] play failed: {exc}")
+        await send_screen_status(client_id, "状态：音乐播放失败。", event="music_error")
+        return False
+    finally:
+        await send_tts_state_to_esp32(client_id, "stop", source=source, turn_id=turn_id)
+
+    print(f"[Music] done, frames={frame_count}, song={song.label}")
+    return frame_count > 0
+
+
+async def answer_music_request_if_needed(client_id: str, text: str, turn_id: int) -> bool:
+    """Handle play/stop music commands using an LLM semantic classifier."""
+    music_intent = await classify_music_request(text)
+    music_action = music_intent.get("action")
+    music_query = (music_intent.get("query") or "").strip()
+    music_title = (music_intent.get("title") or "").strip()
+    music_artist = (music_intent.get("artist") or "").strip()
+    music_kind = (music_intent.get("kind") or "").strip()
+    if music_action not in {"play", "stop"}:
+        return False
+
+    if music_action == "stop":
+        await send_tts_state_to_esp32(client_id, "stop", source="music", turn_id=turn_id)
+        await send_screen_status(client_id, "状态：已停止播放音乐。", event="music_stop")
+        await send_tts_stream_to_esp32(client_id, "音乐已停止。", source="music", turn_id=turn_id)
+        return True
+
+    ok = await send_music_frames_to_esp32(
+        client_id,
+        music_query,
+        title=music_title,
+        artist=music_artist,
+        kind=music_kind,
+        source="music",
+        turn_id=turn_id,
+    )
+    if not ok:
+        print(f"[Music] no playable result for query={music_query!r}")
     return True
 
 async def send_pc_command(pc_command: dict, client_id: str, turn_id: int) -> bool:
@@ -398,8 +599,19 @@ def pick_esp32_client(client_id: str | None = None) -> str | None:
     """优先选择指定客户端，其次选择最近活跃客户端，最后选择任意在线 ESP32。"""
     if client_id and client_id in esp32_clients:
         return client_id
+    if latest_sensor_data:
+        sensor_client = latest_sensor_data.get("client_id")
+        received_at = float(latest_sensor_data.get("received_at") or 0)
+        if sensor_client in esp32_clients and time.time() - received_at < 10.0:
+            return sensor_client
     if last_active_esp32_id and last_active_esp32_id in esp32_clients:
         return last_active_esp32_id
+    active = [
+        (float((esp32_sessions.get(cid) or {}).get("last_seen_at") or 0), cid)
+        for cid in esp32_clients.keys()
+    ]
+    if active:
+        return max(active)[1]
     return next(iter(esp32_clients.keys()), None)
 
 
@@ -894,8 +1106,37 @@ async def handle_ai_stream_result(client_id: str, user_text: str, history: list[
     print(f"[LLM-stream] frames={total_frames}, reply={full_reply.strip()!r}")
 
 
-async def send_app_message(websocket: WebSocket, payload: dict) -> None:
-    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+async def send_app_message(websocket: WebSocket, payload: dict) -> bool:
+    try:
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        return True
+    except Exception as exc:
+        print(f"[APP] send failed: {exc}")
+        return False
+
+
+def quick_music_preroll_text(text: str) -> str:
+    """Fast UX hint only; the real music intent and query still come from the LLM."""
+    raw = (text or "").strip()
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
+        return ""
+
+    stop_words = ("停止播放", "暂停播放", "停止音乐", "暂停音乐", "关闭音乐", "关掉音乐", "停歌", "别放了")
+    if any(word in compact for word in stop_words):
+        return "我先停掉音乐。"
+
+    play_words = ("播放", "放一首", "放首", "播一首", "播首", "来一首", "来首", "听一首", "听首")
+    if not any(word in compact for word in play_words):
+        return ""
+
+    query = raw
+    query = re.sub(r"^(?:小安)?(?:帮我|给我|可以)?(?:播放|放一首|放首|播一首|播首|来一首|来首|听一首|听首)", "", query).strip()
+    query = re.sub(r"(?:这首歌|这首|歌曲|音乐)$", "", query).strip()
+    query = query.strip("《》“”\"' ，。！？,.!?")
+    if 1 <= len(query) <= 18:
+        return f"我先帮你找《{query}》。"
+    return "我先帮你找一下。"
 
 
 async def handle_app_chat_once(
@@ -969,6 +1210,96 @@ async def handle_app_chat_once(
         "device_tts": allow_device_tts,
         "quiet_status": quiet_status,
     })
+
+    quick_music_reply = quick_music_preroll_text(user_text)
+    quick_music_preroll_task = None
+    if quick_music_reply:
+        await send_app_message(websocket, {
+            "type": "app_chat_delta",
+            "request_id": request_id,
+            "delta": quick_music_reply,
+            "text": quick_music_reply,
+        })
+        if allow_device_tts:
+            quick_music_preroll_task = asyncio.create_task(
+                send_tts_stream_to_esp32(
+                    target,
+                    quick_music_reply,
+                    source="app_chat",
+                    turn_id=turn_id,
+                    wait_playback=True,
+                )
+            )
+
+    music_intent = await classify_music_request(user_text)
+    music_action = music_intent.get("action")
+    music_query = (music_intent.get("query") or "").strip()
+    music_title = (music_intent.get("title") or "").strip()
+    music_artist = (music_intent.get("artist") or "").strip()
+    music_kind = (music_intent.get("kind") or "").strip()
+    if music_action in {"play", "stop"}:
+        if allow_device_status:
+            await send_json_to_esp32(target, {
+                "type": "status",
+                "text": user_text,
+                "source": "app_chat",
+                "turn_id": turn_id,
+            })
+
+        if music_action == "stop":
+            reply = "音乐已停止。"
+            await send_tts_state_to_esp32(target, "stop", source="music", turn_id=turn_id)
+            await send_screen_status(target, "状态：已停止播放音乐。", event="music_stop")
+            if allow_device_tts:
+                await send_tts_stream_to_esp32(target, reply, source="app_chat", turn_id=turn_id)
+        else:
+            if music_kind == "artist" and music_artist:
+                reply = f"我先找一首{music_artist}能播的歌。"
+            elif music_title and music_artist:
+                reply = f"我先找{music_artist}的《{music_title}》。"
+            else:
+                reply = f"我先帮你找《{music_query}》。"
+
+            async def _music_task() -> None:
+                preroll_task = quick_music_preroll_task
+                if preroll_task is None and allow_device_tts:
+                    preroll_task = asyncio.create_task(
+                        send_tts_stream_to_esp32(
+                            target,
+                            reply,
+                            source="app_chat",
+                            turn_id=turn_id,
+                            wait_playback=True,
+                        )
+                    )
+                await send_music_frames_to_esp32(
+                    target,
+                    music_query,
+                    title=music_title,
+                    artist=music_artist,
+                    kind=music_kind,
+                    source="app_chat_music",
+                    turn_id=turn_id,
+                    wait_before_audio=preroll_task,
+                )
+
+            esp32_sessions[target]["active_task"] = asyncio.create_task(_music_task())
+
+        await send_app_message(websocket, {
+            "type": "app_chat_delta",
+            "request_id": request_id,
+            "delta": reply,
+            "text": reply,
+        })
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": reply,
+            "turn_id": turn_id,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
+        })
+        return
 
     history_key = (session_id or str(id(websocket))).strip() or str(id(websocket))
     history = app_chat_histories.setdefault(history_key, [])
@@ -1075,6 +1406,9 @@ async def answer_user_text(client_id: str, text: str, history: list[dict], turn_
         await send_tts_stream_to_esp32(
             client_id, EXIT_REPLY_TEXT, turn_id=turn_id, end_dialog=True
         )
+        return
+
+    if await answer_music_request_if_needed(client_id, text, turn_id):
         return
 
     settings = load_user_settings()
@@ -1248,7 +1582,7 @@ async def esp32_endpoint(websocket: WebSocket):
     client_id = str(id(websocket))
     esp32_clients[client_id] = websocket
     esp32_send_locks[client_id] = asyncio.Lock()
-    esp32_sessions[client_id] = {"turn_id": 0}
+    esp32_sessions[client_id] = {"turn_id": 0, "connected_at": time.time(), "last_seen_at": time.time()}
     last_active_esp32_id = client_id
     ensure_sensor_poll_task()
     history: list[dict] = []
@@ -1261,6 +1595,7 @@ async def esp32_endpoint(websocket: WebSocket):
             if message.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect
             last_active_esp32_id = client_id
+            esp32_sessions.setdefault(client_id, {})["last_seen_at"] = time.time()
 
             try:
                 if "bytes" in message and message["bytes"] is not None:
@@ -1293,6 +1628,9 @@ async def esp32_endpoint(websocket: WebSocket):
                     session_id = data.get("session_id") or uuid.uuid4().hex[:12]
                     esp32_sessions[client_id]["session_id"] = session_id
                     esp32_sessions[client_id]["audio_params"] = data.get("audio_params", {})
+                    for old_id, old_session in list(esp32_sessions.items()):
+                        if old_id != client_id and old_session.get("session_id") == session_id:
+                            await drop_esp32_client(old_id, f"superseded by session {session_id}")
                     await send_json_to_esp32(client_id, {
                         "type": "hello",
                         "session_id": session_id,
@@ -1607,12 +1945,23 @@ async def app_endpoint(websocket: WebSocket):
                     "esp32_connected": bool(esp32_clients),
                 }, ensure_ascii=False))
             elif msg_type == "app_chat":
-                await handle_app_chat_once(
-                    websocket,
-                    str(data.get("text") or ""),
-                    str(data.get("request_id") or ""),
-                    str(data.get("session_id") or app_id),
-                )
+                request_id = str(data.get("request_id") or "")
+                try:
+                    await handle_app_chat_once(
+                        websocket,
+                        str(data.get("text") or ""),
+                        request_id,
+                        str(data.get("session_id") or app_id),
+                    )
+                except Exception as exc:
+                    print(f"[APP-chat] fatal error: {exc}")
+                    import traceback
+                    traceback.print_exc()
+                    await send_app_message(websocket, {
+                        "type": "app_chat_error",
+                        "request_id": request_id,
+                        "error": str(exc)[:160],
+                    })
             elif msg_type == "pillow_cmd":
                 target = pick_esp32_client(data.get("client_id"))
                 payload = {

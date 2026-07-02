@@ -344,6 +344,72 @@ async def classify_pre_sleep_light_reply(user_text: str) -> str:
     return "ignore"
 
 
+async def classify_music_request(user_text: str) -> dict:
+    """Use the LLM to decide whether the user is asking for music/audio playback."""
+    system = (
+        "你是一个严格的语义分类器，用来判断用户是否要播放或停止网络音乐/白噪声。"
+        "只能输出 JSON，不要解释，不要 Markdown。"
+        "\n\n输出格式："
+        '{"action":"play|stop|none","query":"用于搜索的关键词","title":"歌名或白噪声名称，可空","artist":"歌手名，可空","kind":"song|artist|noise|unknown","reason":"很短原因"}'
+        "\n\n判定规则："
+        "\n- 用户想播放、找歌、听某首歌、听某个歌手、来点白噪声/雨声/助眠音乐/网络歌曲 => action=play。"
+        "\n- 用户想停止、暂停、关掉音乐、别放了 => action=stop。"
+        "\n- 只是问你会不会唱歌、讨论歌曲好不好听、聊天提到歌名但没有播放意图 => action=none。"
+        "\n- kind=song 表示明确要某首歌；kind=artist 表示只指定歌手但没指定歌名；kind=noise 表示雨声/白噪声/助眠音乐。"
+        "\n- play 时 query 要适合音乐搜索：保留歌名、歌手、版本；去掉'帮我/放首/来点/播放/听一下'等口语。"
+        "\n- title 填明确歌名或音频名称；artist 只在用户明确说出歌手时填写。"
+        "\n- 如果用户说'周杰伦的青花瓷'，query 输出'周杰伦 青花瓷'，title='青花瓷'，artist='周杰伦'。"
+        "\n- 如果用户说'天青色等烟雨那首'，query 输出'青花瓷 周杰伦'，title='青花瓷'，artist='周杰伦'。"
+        "\n- 如果用户说'播放周杰伦的歌'，query 输出'周杰伦'，title=''，artist='周杰伦'，kind='artist'。"
+        "\n- 如果用户说'随便来首周杰伦'，query 输出'周杰伦'，title=''，artist='周杰伦'，kind='artist'。"
+        "\n- 如果用户说'雨声助眠'，query 输出'雨声 白噪音 助眠'，title='雨声助眠'，artist=''。"
+    )
+    fallback = {"action": "none", "query": "", "reason": "not_music"}
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": str(user_text or "").strip()},
+            ],
+            max_tokens=192,
+            temperature=0,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        if content.startswith("```"):
+            content = content.strip("`")
+            if content.lower().startswith("json"):
+                content = content[4:].strip()
+        try:
+            obj = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                obj = json.loads(content[start:end + 1])
+            else:
+                raise
+        action = str(obj.get("action") or "none").strip().lower()
+        if action not in {"play", "stop", "none"}:
+            action = "none"
+        query = str(obj.get("query") or "").strip()
+        if action == "play" and not query:
+            action = "none"
+        result = {
+            "action": action,
+            "query": query,
+            "title": str(obj.get("title") or "").strip(),
+            "artist": str(obj.get("artist") or "").strip(),
+            "kind": str(obj.get("kind") or "unknown").strip().lower(),
+            "reason": str(obj.get("reason") or "").strip()[:80],
+        }
+        print(f"[LLM] music_intent {result}")
+        return result
+    except Exception as exc:
+        print(f"[LLM] classify_music_request error: {exc}")
+        return fallback
+
+
 TOOLS = [
     {
         "type": "function",

@@ -34,7 +34,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         {
             "name": "night_sleep",
             "label": "夜间睡眠",
-            "enabled": True,
+            "enabled": False,
             "start": "22:30",
             "end": "07:30",
         },
@@ -47,11 +47,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         },
     ],
     "quiet_rules": {
-        "block_ai_voice": True,
-        "block_ai_light": True,
-        "block_ai_screen": True,
-        "block_ai_pc_agent": True,
-        "allow_gentle_pillow_adjust": True,
+        "block_ai_voice": False,
+        "block_ai_light": False,
+        "block_ai_screen": False,
+        "block_ai_pc_agent": False,
+        "allow_gentle_pillow_adjust": False,
         "allow_sleep_environment_control": True,
         "alert_method": "phone_only",
     },
@@ -135,16 +135,20 @@ def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
 
     settings["quiet_periods"] = _normalize_periods(settings.get("quiet_periods"))
 
-    rules = _deep_merge(DEFAULT_SETTINGS["quiet_rules"], settings.get("quiet_rules") or {})
+    rule_defaults = DEFAULT_SETTINGS["quiet_rules"]
+    rules = _deep_merge(rule_defaults, settings.get("quiet_rules") or {})
     settings["quiet_rules"] = {
-        "block_ai_voice": _to_bool(rules.get("block_ai_voice"), True),
-        "block_ai_light": _to_bool(rules.get("block_ai_light"), True),
-        "block_ai_screen": _to_bool(rules.get("block_ai_screen"), True),
-        "block_ai_pc_agent": _to_bool(rules.get("block_ai_pc_agent"), True),
-        "allow_gentle_pillow_adjust": _to_bool(rules.get("allow_gentle_pillow_adjust"), True),
-        "allow_sleep_environment_control": _to_bool(rules.get("allow_sleep_environment_control"), True),
-        "alert_method": str(rules.get("alert_method") or "phone_only")[:40],
+        key: _to_bool(rules.get(key), bool(rule_defaults[key]))
+        for key in (
+            "block_ai_voice",
+            "block_ai_light",
+            "block_ai_screen",
+            "block_ai_pc_agent",
+            "allow_gentle_pillow_adjust",
+            "allow_sleep_environment_control",
+        )
     }
+    settings["quiet_rules"]["alert_method"] = str(rules.get("alert_method") or "phone_only")[:40]
 
     memory = settings.get("memory") or []
     if isinstance(memory, str):
