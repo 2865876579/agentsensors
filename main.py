@@ -23,6 +23,13 @@ import base64
 import re
 import uuid
 import opuslib
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
 
 # Windows 控制台默认 GBK，强制 UTF-8 避免 emoji 打印崩溃
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -32,10 +39,11 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
 import time
 import urllib.parse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from config import SERVER_HOST, SERVER_PORT
+from config import SERVER_HOST, SERVER_PORT, TIMEZONE
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
     chat_stream,
+    classify_alarm_request,
     classify_music_request,
     classify_pre_sleep_light_reply,
     generate_automation_reply,
@@ -57,7 +65,15 @@ from user_settings import (
     save_user_settings,
 )
 
-app = FastAPI(title="Smart Pillow Cloud Server")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_sensor_poll_task()
+    ensure_alarm_scheduler_task()
+    yield
+
+
+app = FastAPI(title="Smart Pillow Cloud Server", lifespan=lifespan)
 APP_VERSION = "xiaozhi_realtime_v5"
 
 WAKE_TRIGGER_TEXT = "__wake__"
@@ -95,6 +111,14 @@ app_clients: dict[str, WebSocket] = {}
 app_chat_histories: dict[str, list[dict]] = {}
 latest_sensor_data: dict | None = None
 sensor_poll_task: asyncio.Task | None = None
+alarm_scheduler_task: asyncio.Task | None = None
+alarm_runtime: dict = {
+    "active": False,
+    "stage": "idle",
+    "alarm_id": "",
+    "message": "未触发",
+    "started_at": 0.0,
+}
 SENSOR_POLL_INTERVAL_SEC = 2.0
 device_tts_busy_until: dict[str, float] = {}
 TTS_PLAYBACK_COOLDOWN_SEC = 4.0
@@ -102,6 +126,8 @@ TTS_PLAYBACK_COOLDOWN_SEC = 4.0
 PRE_SLEEP_WINDOW_MINUTES = 10
 SLEEP_GREETING_WINDOW_MINUTES = 180
 PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 2.0
+ALARM_FSR_ON_THRESHOLD_N = 1.0
+ALARM_FSR_OFF_THRESHOLD_N = 0.6
 PRE_SLEEP_LIGHT_THRESHOLD_LUX = 140.0
 PRE_SLEEP_REPLY_TIMEOUT_SEC = 30.0
 AIR_BAD_PPM_THRESHOLD = 2.0
@@ -663,6 +689,8 @@ def _get_automation_state(client_id: str) -> dict:
             "pending_light_prompt": None,
             "last_pre_sleep_prompt_key": "",
             "last_sleep_greeting_day": "",
+            "sleep_greeting_in_progress_day": "",
+            "sleep_greeting_in_progress_until": 0.0,
             "fan_alarm_active": False,
             "humidifier_alarm_active": False,
             "worker_task": None,
@@ -690,6 +718,590 @@ def _is_user_on_pillow(sensor_payload: dict) -> bool:
             if _safe_float(item.get("n")) >= PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N:
                 return True
     return False
+
+
+def _alarm_now() -> datetime:
+    if ZoneInfo is not None:
+        return datetime.now(ZoneInfo(TIMEZONE))
+    return datetime.now()
+
+
+def _alarm_minutes(text: str) -> int:
+    hour, minute = str(text or "00:00").split(":", 1)
+    return int(hour) * 60 + int(minute)
+
+
+def _alarm_repeat_matches(alarm: dict, now: datetime) -> bool:
+    repeat = str(alarm.get("repeat") or "daily").lower()
+    weekday = now.weekday()
+    if repeat == "daily":
+        return True
+    if repeat == "workday":
+        return weekday < 5
+    if repeat == "weekend":
+        return weekday >= 5
+    return repeat == "once"
+
+
+def _alarm_trigger_key(alarm: dict, now: datetime) -> str:
+    return f"{now.date().isoformat()}:{alarm.get('id')}:{alarm.get('time')}"
+
+
+def _alarm_sensor_payload(client_id: str | None = None) -> dict | None:
+    if not latest_sensor_data:
+        return None
+    if client_id and latest_sensor_data.get("client_id") != client_id:
+        return None
+    if time.time() - float(latest_sensor_data.get("received_at") or 0) > 8.0:
+        return None
+    data = latest_sensor_data.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _alarm_user_on_pillow(sensor_payload: dict | None) -> bool | None:
+    if not sensor_payload:
+        return None
+    fsr = sensor_payload.get("fsr") or []
+    has_valid = False
+    max_force = 0.0
+    for item in fsr:
+        if isinstance(item, dict) and item.get("valid") is not False:
+            has_valid = True
+            max_force = max(max_force, _safe_float(item.get("n")))
+    if not has_valid:
+        return None
+    if max_force >= ALARM_FSR_ON_THRESHOLD_N:
+        return True
+    if max_force < ALARM_FSR_OFF_THRESHOLD_N:
+        return False
+    return True
+
+
+def _alarm_max_force_n(sensor_payload: dict | None) -> float | None:
+    if not sensor_payload:
+        return None
+    fsr = sensor_payload.get("fsr") or []
+    values = [
+        _safe_float(item.get("n"))
+        for item in fsr
+        if isinstance(item, dict) and item.get("valid") is not False
+    ]
+    return max(values) if values else None
+
+
+def _alarm_pressure_kpa(sensor_payload: dict | None) -> float | None:
+    if not sensor_payload:
+        return None
+    if sensor_payload.get("pressure_valid") is False:
+        return None
+    try:
+        value = float(sensor_payload.get("pressure_kpa"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _alarm_target_reached(sensor_payload: dict | None, action: str, target_kpa: float) -> bool:
+    if not sensor_payload:
+        return False
+
+    expected_action = "tilt_to" if action == "tilt" else "recover_to"
+    last_pump = sensor_payload.get("last_pump")
+    if isinstance(last_pump, dict) and last_pump.get("action") == expected_action:
+        try:
+            last_target = float(last_pump.get("target_kpa"))
+            last_result = float(last_pump.get("result_kpa"))
+        except (TypeError, ValueError):
+            last_target = math.nan
+            last_result = math.nan
+        if math.isfinite(last_target) and abs(last_target - target_kpa) <= 0.08:
+            if action == "tilt" and math.isfinite(last_result) and last_result >= target_kpa - 0.10:
+                return True
+            if action == "recover" and math.isfinite(last_result) and last_result <= target_kpa + 0.10:
+                return True
+
+    pressure = _alarm_pressure_kpa(sensor_payload)
+    if pressure is None:
+        return False
+    if action == "tilt":
+        return pressure >= target_kpa - 0.10
+    return pressure <= target_kpa + 0.10
+
+
+def _pick_alarm_client(client_id: str | None = None) -> str | None:
+    """Alarm control should follow the ESP32 that is currently reporting sensors."""
+    if latest_sensor_data:
+        sensor_client = latest_sensor_data.get("client_id")
+        received_at = float(latest_sensor_data.get("received_at") or 0)
+        if sensor_client in esp32_clients and time.time() - received_at < 8.0:
+            return sensor_client
+    return pick_esp32_client(client_id)
+
+
+async def _alarm_send_json(client_id: str | None, payload: dict, label: str) -> tuple[str | None, bool]:
+    target = _pick_alarm_client(client_id)
+    if not target:
+        print(f"[Alarm] {label}: no ESP32 client, payload={payload}")
+        return client_id, False
+    if client_id and target != client_id:
+        print(f"[Alarm] retarget ESP32 {client_id} -> {target}")
+
+    ok = await send_json_to_esp32(target, payload)
+    if not ok:
+        retry = _pick_alarm_client(None)
+        if retry and retry != target:
+            print(f"[Alarm] {label}: retry on ESP32 {retry}")
+            ok = await send_json_to_esp32(retry, payload)
+            target = retry
+
+    print(f"[Alarm] {label}: client={target} ok={ok} payload={payload}")
+    return target, ok
+
+
+async def _alarm_send_screen_status(client_id: str | None, text: str, event: str) -> str | None:
+    target = _pick_alarm_client(client_id)
+    if target:
+        await send_screen_status(target, text, event=event)
+    return target or client_id
+
+
+async def broadcast_alarm_state(stage: str, message: str, alarm: dict | None = None) -> None:
+    active = stage not in {"idle", "done", "skipped"}
+    alarm_runtime.update({
+        "active": active,
+        "stage": stage,
+        "alarm_id": str((alarm or {}).get("id") or ""),
+        "message": message,
+        "started_at": (alarm_runtime.get("started_at") or time.time()) if active else 0.0,
+    })
+    await broadcast_to_apps({
+        "type": "alarm_state",
+        "state": dict(alarm_runtime),
+        "alarm": alarm or {},
+    })
+
+
+async def _alarm_wait_for_leave(
+    client_id: str,
+    *,
+    timeout_sec: int | None,
+    leave_confirm_sec: int,
+    stage: str,
+) -> tuple[bool, str]:
+    start = time.time()
+    leave_since = None
+    while timeout_sec is None or time.time() - start < timeout_sec:
+        client_id = _pick_alarm_client(client_id) or client_id
+        await request_sensor_data(client_id)
+        await asyncio.sleep(1.0)
+        on_pillow = _alarm_user_on_pillow(_alarm_sensor_payload(client_id))
+        max_force = _alarm_max_force_n(_alarm_sensor_payload(client_id))
+        now = time.time()
+        force_text = "unknown" if max_force is None else f"{max_force:.2f}N"
+        elapsed = int(now - start)
+        print(f"[Alarm] stage={stage} elapsed={elapsed}s client={client_id} on_pillow={on_pillow} fsr_max={force_text}")
+        if on_pillow is False:
+            leave_since = leave_since or now
+            if now - leave_since >= leave_confirm_sec:
+                print(f"[Alarm] stage={stage} leave confirmed after {leave_confirm_sec}s")
+                return True, client_id
+        else:
+            leave_since = None
+    return False, client_id
+
+
+async def _alarm_wait_for_pillow_target(
+    client_id: str,
+    *,
+    action: str,
+    target_kpa: float,
+    leave_confirm_sec: int,
+    timeout_sec: int = 45,
+) -> tuple[bool, str, bool]:
+    start = time.time()
+    leave_since = None
+    while time.time() - start < timeout_sec:
+        client_id = _pick_alarm_client(client_id) or client_id
+        await request_sensor_data(client_id)
+        await asyncio.sleep(1.0)
+        sensor_payload = _alarm_sensor_payload(client_id)
+        on_pillow = _alarm_user_on_pillow(sensor_payload)
+        max_force = _alarm_max_force_n(sensor_payload)
+        pressure = _alarm_pressure_kpa(sensor_payload)
+        reached = _alarm_target_reached(sensor_payload, action, target_kpa)
+        now = time.time()
+        force_text = "unknown" if max_force is None else f"{max_force:.2f}N"
+        pressure_text = "unknown" if pressure is None else f"{pressure:.2f}kPa"
+        print(
+            f"[Alarm] stage=pillow_wakeup action={action} target={target_kpa:.2f}kPa "
+            f"client={client_id} on_pillow={on_pillow} fsr_max={force_text} "
+            f"pressure={pressure_text} reached={reached}"
+        )
+
+        if on_pillow is False:
+            leave_since = leave_since or now
+            if now - leave_since >= leave_confirm_sec:
+                print(f"[Alarm] pillow_wakeup leave confirmed after {leave_confirm_sec}s")
+                return True, client_id, reached
+        else:
+            leave_since = None
+
+        if reached:
+            return False, client_id, True
+
+    print(f"[Alarm] pillow_wakeup target timeout action={action} target={target_kpa:.2f}kPa")
+    return False, client_id, False
+
+
+async def _cancel_alarm_music(task: asyncio.Task | None, client_id: str, turn_id: int) -> None:
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"[Alarm] music task error: {exc}")
+    await send_tts_state_to_esp32(client_id, "stop", source="alarm_music", turn_id=turn_id)
+
+
+async def finish_alarm(client_id: str, alarm: dict, stage: str, message: str, turn_id: int) -> None:
+    client_id, _ = await _alarm_send_json(
+        client_id,
+        {"type": "pillow_cmd", "action": "halt", "duration_sec": 0},
+        f"finish/{stage}/halt",
+    )
+    await _alarm_send_screen_status(client_id, f"状态：{message}", event=f"alarm_{stage}")
+    print(f"[Alarm] finish stage={stage} message={message} client={client_id} turn={turn_id}")
+    alarm_runtime.update({"active": False, "stage": stage, "message": message, "started_at": 0.0})
+    await broadcast_alarm_state(stage, message, alarm)
+
+
+async def run_alarm(alarm: dict, client_id: str, turn_id: int) -> None:
+    alarm_runtime.update({
+        "active": True,
+        "stage": "music_wakeup",
+        "alarm_id": str(alarm.get("id") or ""),
+        "message": "闹钟已触发",
+        "started_at": time.time(),
+    })
+    leave_confirm = int(alarm.get("leave_confirm_seconds") or 5)
+    music_seconds = int(alarm.get("music_stage_seconds") or 30)
+    high_kpa = max(0.0, min(10.0, float(alarm.get("pillow_high_kpa") or 5.0)))
+    low_kpa = max(0.0, min(10.0, float(alarm.get("pillow_low_kpa") or 0.7)))
+    song_query = str(alarm.get("song_query") or "小半").strip() or "小半"
+    music_task = None
+
+    try:
+        client_id = _pick_alarm_client(client_id) or client_id
+        print(
+            f"[Alarm] start id={alarm.get('id')} client={client_id} turn={turn_id} "
+            f"song={song_query} music_stage={music_seconds}s leave_confirm={leave_confirm}s "
+            f"pillow={high_kpa:.2f}kPa->{low_kpa:.2f}kPa"
+        )
+        await request_sensor_data(client_id)
+        await asyncio.sleep(1.0)
+        on_pillow = _alarm_user_on_pillow(_alarm_sensor_payload(client_id))
+        max_force = _alarm_max_force_n(_alarm_sensor_payload(client_id))
+        print(f"[Alarm] initial on_pillow={on_pillow} fsr_max={max_force} client={client_id}")
+        if on_pillow is False:
+            await finish_alarm(client_id, alarm, "skipped", "闹钟已到，检测到无人，已跳过", turn_id)
+            return
+
+        await broadcast_alarm_state("music_wakeup", "闹钟响起，正在播放起床音乐", alarm)
+        client_id = await _alarm_send_screen_status(
+            client_id,
+            "状态：闹钟响起，正在播放起床音乐。",
+            event="alarm_music",
+        ) or client_id
+        client_id, _ = await _alarm_send_json(
+            client_id,
+            {
+                "type": "led_cmd",
+                "action": "set",
+                "enabled": True,
+                "mode": "solid",
+                "color": "warm",
+                "brightness_pct": 35,
+            },
+            "music_wakeup/led",
+        )
+        music_task = asyncio.create_task(
+            send_music_frames_to_esp32(
+                client_id,
+                song_query,
+                source="alarm_music",
+                turn_id=turn_id,
+            )
+        )
+        left, client_id = await _alarm_wait_for_leave(
+            client_id,
+            timeout_sec=music_seconds,
+            leave_confirm_sec=leave_confirm,
+            stage="music_wakeup",
+        )
+        if left:
+            await _cancel_alarm_music(music_task, client_id, turn_id)
+            await finish_alarm(client_id, alarm, "done", "已离枕5秒，闹钟暂停", turn_id)
+            return
+
+        await broadcast_alarm_state("pillow_wakeup", "仍未起床，枕头正在强制唤醒", alarm)
+        client_id = await _alarm_send_screen_status(
+            client_id,
+            "状态：仍未起床，枕头正在强制唤醒。",
+            event="alarm_pillow",
+        ) or client_id
+        print("[Alarm] enter pillow_wakeup, music continues unless the stream ends")
+
+        while True:
+            for action, target_kpa in (("tilt", high_kpa), ("recover", low_kpa)):
+                client_id = _pick_alarm_client(client_id) or client_id
+                if music_task is None or music_task.done():
+                    if music_task is not None:
+                        try:
+                            print(f"[Alarm] music task ended result={music_task.result()}")
+                        except asyncio.CancelledError:
+                            print("[Alarm] music task was cancelled")
+                        except Exception as exc:
+                            print(f"[Alarm] music task ended error={exc}")
+                    print(f"[Alarm] restart music in pillow_wakeup song={song_query} client={client_id}")
+                    music_task = asyncio.create_task(
+                        send_music_frames_to_esp32(
+                            client_id,
+                            song_query,
+                            source="alarm_music",
+                            turn_id=turn_id,
+                        )
+                    )
+
+                action_text = "升高到" if action == "tilt" else "降低到"
+                await broadcast_alarm_state(
+                    f"pillow_{action}",
+                    f"强唤醒：枕头{action_text}{target_kpa:.1f}kPa",
+                    alarm,
+                )
+                client_id = await _alarm_send_screen_status(
+                    client_id,
+                    f"状态：闹钟强唤醒，枕头{action_text}{target_kpa:.1f}kPa。",
+                    event=f"alarm_pillow_{action}",
+                ) or client_id
+                client_id, ok = await _alarm_send_json(
+                    client_id,
+                    {
+                        "type": "pillow_cmd",
+                        "action": action,
+                        "duration_sec": 0,
+                        "target_kpa": target_kpa,
+                    },
+                    f"pillow_wakeup/{action}",
+                )
+                if not ok:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                left, client_id, reached = await _alarm_wait_for_pillow_target(
+                    client_id,
+                    action=action,
+                    target_kpa=target_kpa,
+                    leave_confirm_sec=leave_confirm,
+                )
+                if left:
+                    await _cancel_alarm_music(music_task, client_id, turn_id)
+                    await finish_alarm(client_id, alarm, "done", "已离枕5秒，闹钟暂停", turn_id)
+                    return
+                if not reached:
+                    print(f"[Alarm] continue cycle after target miss action={action} target={target_kpa:.2f}kPa")
+    except asyncio.CancelledError:
+        await _cancel_alarm_music(music_task, client_id, turn_id)
+        await _alarm_send_json(
+            client_id,
+            {"type": "pillow_cmd", "action": "halt", "duration_sec": 0},
+            "cancel/halt",
+        )
+        raise
+    except Exception as exc:
+        print(f"[Alarm] run failed: {exc}")
+        await _cancel_alarm_music(music_task, client_id, turn_id)
+        await finish_alarm(client_id, alarm, "done", "闹钟执行异常，已停止", turn_id)
+
+
+async def maybe_trigger_alarm() -> None:
+    if alarm_runtime.get("active"):
+        return
+    settings = load_user_settings()
+    alarms = settings.get("alarms") or []
+    now = _alarm_now()
+    now_min = now.hour * 60 + now.minute
+    target = pick_esp32_client()
+    if not target:
+        return
+
+    for alarm in alarms:
+        if not alarm.get("enabled"):
+            continue
+        if not _alarm_repeat_matches(alarm, now):
+            continue
+        try:
+            alarm_min = _alarm_minutes(str(alarm.get("time") or "00:00"))
+        except Exception:
+            continue
+        if alarm_min != now_min:
+            continue
+        trigger_key = _alarm_trigger_key(alarm, now)
+        if alarm.get("last_triggered_key") == trigger_key:
+            continue
+
+        updated_alarms = []
+        for item in alarms:
+            updated = dict(item)
+            if updated.get("id") == alarm.get("id"):
+                updated["last_triggered_key"] = trigger_key
+                if updated.get("repeat") == "once":
+                    updated["enabled"] = False
+            updated_alarms.append(updated)
+        settings = save_user_settings({"alarms": updated_alarms})
+        await broadcast_to_apps({
+            "type": "settings_state",
+            "settings": settings,
+            "quiet_status": get_quiet_status(settings),
+            "alarm_state": dict(alarm_runtime),
+        })
+
+        await cancel_active_task(target)
+        turn_id = next_turn_id(target)
+        task = asyncio.create_task(run_alarm(dict(alarm), target, turn_id))
+        esp32_sessions.setdefault(target, {})["active_task"] = task
+        return
+
+
+async def alarm_scheduler_loop() -> None:
+    while True:
+        try:
+            await maybe_trigger_alarm()
+        except Exception as exc:
+            print(f"[Alarm] scheduler error: {exc}")
+        await asyncio.sleep(2.0)
+
+
+def ensure_alarm_scheduler_task() -> None:
+    global alarm_scheduler_task
+    if alarm_scheduler_task is None or alarm_scheduler_task.done():
+        alarm_scheduler_task = asyncio.create_task(alarm_scheduler_loop())
+
+
+def _alarm_time_from_intent(intent: dict) -> tuple[datetime | None, str]:
+    now = _alarm_now()
+    relative_minutes = int(intent.get("relative_minutes") or 0)
+    if relative_minutes > 0:
+        target = now + timedelta(minutes=relative_minutes)
+        return target, f"{relative_minutes}分钟后"
+
+    time_text = str(intent.get("time") or "").strip()
+    try:
+        hour_text, minute_text = time_text.split(":", 1)
+        hour = max(0, min(23, int(hour_text)))
+        minute = max(0, min(59, int(minute_text)))
+    except Exception:
+        return None, ""
+
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target, target.strftime("%H:%M")
+
+
+def _format_alarm_reply(target: datetime, song_query: str, relative_text: str) -> str:
+    song = song_query.strip() or "默认音乐"
+    if relative_text.endswith("分钟后"):
+        return f"好，{relative_text}用《{song}》叫你。"
+    return f"好，已设好{target.strftime('%H:%M')}的闹钟，用《{song}》唤醒。"
+
+
+async def handle_alarm_request_if_needed(
+    client_id: str,
+    text: str,
+    turn_id: int,
+    *,
+    allow_voice: bool = True,
+    source: str = "alarm_setting",
+) -> str | None:
+    intent = await classify_alarm_request(text)
+    action = intent.get("action")
+    if action == "none":
+        return None
+
+    settings = load_user_settings()
+    alarms = list(settings.get("alarms") or [])
+    current = dict(alarms[0]) if alarms else {
+        "id": "wake_alarm",
+        "enabled": False,
+        "time": "07:30",
+        "repeat": "daily",
+        "song_query": "小半",
+        "music_stage_seconds": 30,
+        "leave_confirm_seconds": 5,
+        "pillow_up_seconds": 3,
+        "pillow_down_seconds": 3,
+        "pillow_high_kpa": 5.0,
+        "pillow_low_kpa": 0.7,
+        "last_triggered_key": "",
+    }
+
+    if action == "cancel":
+        current["enabled"] = False
+        current["last_triggered_key"] = ""
+        updated = save_user_settings({"alarms": [current] + alarms[1:]})
+        await broadcast_to_apps({
+            "type": "settings_state",
+            "settings": updated,
+            "quiet_status": get_quiet_status(updated),
+            "alarm_state": dict(alarm_runtime),
+        })
+        reply = "好，闹钟先关掉。"
+        await send_screen_status(client_id, "状态：闹钟已关闭。", event="alarm_setting")
+        if allow_voice:
+            await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
+        return reply
+
+    target, relative_text = _alarm_time_from_intent(intent)
+    if target is None:
+        reply = "我没听清具体时间，你再说一遍几点或多久后。"
+        if allow_voice:
+            await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
+        return reply
+
+    song_query = str(intent.get("song_query") or "").strip() or str(current.get("song_query") or "小半")
+    current.update({
+        "enabled": True,
+        "time": target.strftime("%H:%M"),
+        "repeat": str(intent.get("repeat") or "once"),
+        "song_query": song_query,
+        "music_stage_seconds": int(current.get("music_stage_seconds") or 30),
+        "leave_confirm_seconds": int(current.get("leave_confirm_seconds") or 5),
+        "pillow_up_seconds": int(current.get("pillow_up_seconds") or 3),
+        "pillow_down_seconds": int(current.get("pillow_down_seconds") or 3),
+        "pillow_high_kpa": float(current.get("pillow_high_kpa") or 5.0),
+        "pillow_low_kpa": float(current.get("pillow_low_kpa") or 0.7),
+        "last_triggered_key": "",
+    })
+    updated = save_user_settings({"alarms": [current] + alarms[1:]})
+    await broadcast_to_apps({
+        "type": "settings_state",
+        "settings": updated,
+        "quiet_status": get_quiet_status(updated),
+        "alarm_state": dict(alarm_runtime),
+    })
+
+    reply = _format_alarm_reply(target, song_query, relative_text)
+    await send_screen_status(
+        client_id,
+        f"状态：已设置{target.strftime('%H:%M')}闹钟，用《{song_query}》唤醒。",
+        event="alarm_setting",
+    )
+    print(f"[AlarmSetting] set time={current['time']} repeat={current['repeat']} song={song_query!r}")
+    if allow_voice:
+        await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
+    return reply
 
 
 def _update_cached_switch_state(client_id: str, key: str, value) -> None:
@@ -979,21 +1591,43 @@ async def handle_sleep_greeting_trigger(
         print(f"[就寝] 今日已主动问候过，跳过: {day_key}")
         return
 
-    state["last_sleep_greeting_day"] = day_key
-    reply = await generate_automation_reply(
-        "压力传感器检测到用户刚刚躺下，这是今天第一次进入有人模式。"
-        "请用一句非常自然、低打扰的躺下关怀问候用户，像真实枕边助手。"
-        "不要提传感器、系统、检测、模式，也不要催促用户回答。",
-        fallback="躺好啦？我在这儿陪着你。",
-    )
-    reply = reply.strip() or "躺好啦？今天辛苦了，我在这儿陪着你。"
+    now = time.time()
+    if (
+        day_key
+        and state.get("sleep_greeting_in_progress_day") == day_key
+        and float(state.get("sleep_greeting_in_progress_until") or 0) > now
+    ):
+        print(f"[就寝] 主动问候正在生成/播放，跳过重复触发: {day_key}")
+        return
 
-    await send_screen_status(client_id, "状态：今日首次躺下，正在进行关怀问候。", event="sleep_greeting")
-    ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
-    if ok:
-        history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
-        history.append({"role": "assistant", "content": reply})
-        await request_one_shot_listen(client_id, "sleep_greeting_reply")
+    state["sleep_greeting_in_progress_day"] = day_key
+    state["sleep_greeting_in_progress_until"] = now + 45.0
+    try:
+        await send_screen_status(client_id, "状态：今日首次躺下，正在进行关怀问候。", event="sleep_greeting")
+        print(f"[就寝] 开始生成主动问候: {day_key}")
+        reply = await generate_automation_reply(
+            "压力传感器检测到用户刚刚躺下，这是今天第一次进入有人模式。"
+            "请用一句非常自然、低打扰的躺下关怀问候用户，像真实枕边助手。"
+            "不要提传感器、系统、检测、模式，也不要催促用户回答。",
+            fallback="躺好啦？我在这儿陪着你。",
+        )
+        reply = reply.strip() or "躺好啦？今天辛苦了，我在这儿陪着你。"
+
+        print(f"[就寝] 主动问候回复: {reply}")
+        ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
+        print(f"[就寝] 主动问候 TTS ok={ok}")
+        if ok:
+            state["last_sleep_greeting_day"] = day_key
+            history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
+            history.append({"role": "assistant", "content": reply})
+            await request_one_shot_listen(client_id, "sleep_greeting_reply")
+    except asyncio.CancelledError:
+        print(f"[就寝] 主动问候被取消，未计入今日已问候: {day_key}")
+        raise
+    finally:
+        if state.get("sleep_greeting_in_progress_day") == day_key:
+            state["sleep_greeting_in_progress_day"] = ""
+            state["sleep_greeting_in_progress_until"] = 0.0
 
 
 def extract_search_query_from_url(url: str) -> str | None:
@@ -1211,6 +1845,30 @@ async def handle_app_chat_once(
         "quiet_status": quiet_status,
     })
 
+    alarm_reply = await handle_alarm_request_if_needed(
+        target,
+        user_text,
+        turn_id,
+        allow_voice=allow_device_tts,
+        source="app_chat",
+    )
+    if alarm_reply is not None:
+        await send_app_message(websocket, {
+            "type": "app_chat_delta",
+            "request_id": request_id,
+            "delta": alarm_reply,
+            "text": alarm_reply,
+        })
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": alarm_reply,
+            "turn_id": turn_id,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
+        })
+        return
+
     quick_music_reply = quick_music_preroll_text(user_text)
     quick_music_preroll_task = None
     if quick_music_reply:
@@ -1408,12 +2066,24 @@ async def answer_user_text(client_id: str, text: str, history: list[dict], turn_
         )
         return
 
-    if await answer_music_request_if_needed(client_id, text, turn_id):
-        return
-
     settings = load_user_settings()
     if is_sleep_greeting_trigger(text):
         await handle_sleep_greeting_trigger(client_id, history, settings)
+        return
+
+    alarm_reply = await handle_alarm_request_if_needed(
+        client_id,
+        text,
+        turn_id,
+        allow_voice=not is_ai_voice_blocked(settings),
+        source="voice_alarm",
+    )
+    if alarm_reply is not None:
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": alarm_reply})
+        return
+
+    if await answer_music_request_if_needed(client_id, text, turn_id):
         return
 
     pending_reply = await _consume_pre_sleep_light_reply(
@@ -1778,6 +2448,12 @@ async def esp32_endpoint(websocket: WebSocket):
 
                 # ========== 心跳 ==========
                 elif msg_type == "pump_result":
+                    if latest_sensor_data and latest_sensor_data.get("data") is not None:
+                        latest_sensor_data["data"]["last_pump"] = {
+                            "action": data.get("action"),
+                            "target_kpa": data.get("target_kpa"),
+                            "result_kpa": data.get("result_kpa"),
+                        }
                     await broadcast_to_apps({
                         "type": "pump_result",
                         "esp32_connected": True,
@@ -1871,6 +2547,7 @@ async def api_user_settings():
         "ok": True,
         "settings": settings,
         "quiet_status": get_quiet_status(settings),
+        "alarm_state": dict(alarm_runtime),
     }
 
 
@@ -1882,11 +2559,13 @@ async def api_update_user_settings(payload: dict):
         "type": "settings_state",
         "settings": settings,
         "quiet_status": quiet_status,
+        "alarm_state": dict(alarm_runtime),
     })
     return {
         "ok": True,
         "settings": settings,
         "quiet_status": quiet_status,
+        "alarm_state": dict(alarm_runtime),
     }
 
 
@@ -1897,6 +2576,7 @@ async def app_endpoint(websocket: WebSocket):
     app_id = str(id(websocket))
     app_clients[app_id] = websocket
     ensure_sensor_poll_task()
+    ensure_alarm_scheduler_task()
     print(f"[APP] connected ({app_id})")
 
     await websocket.send_text(json.dumps({
@@ -1905,6 +2585,7 @@ async def app_endpoint(websocket: WebSocket):
         "latest": latest_sensor_data,
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
+        "alarm_state": dict(alarm_runtime),
     }, ensure_ascii=False))
     await request_sensor_data()
 
@@ -1925,6 +2606,7 @@ async def app_endpoint(websocket: WebSocket):
                     "type": "settings_state",
                     "settings": settings,
                     "quiet_status": get_quiet_status(settings),
+                    "alarm_state": dict(alarm_runtime),
                 }, ensure_ascii=False))
             elif msg_type == "settings_update":
                 settings = save_user_settings(data.get("settings") or {})
@@ -1934,6 +2616,7 @@ async def app_endpoint(websocket: WebSocket):
                     "ok": True,
                     "settings": settings,
                     "quiet_status": quiet_status,
+                    "alarm_state": dict(alarm_runtime),
                 }
                 await websocket.send_text(json.dumps(payload, ensure_ascii=False))
                 await broadcast_to_apps(payload)

@@ -10,6 +10,7 @@ DeepSeek 对话模块 —— 基于 Function Calling
   3. chat() 主循环不需要动
 """
 import json
+import re
 from datetime import datetime, date, timedelta
 
 # zoneinfo 是 Python 3.9+ 标准库，用于时区感知的时间计算
@@ -407,6 +408,222 @@ async def classify_music_request(user_text: str) -> dict:
         return result
     except Exception as exc:
         print(f"[LLM] classify_music_request error: {exc}")
+        return fallback
+
+
+_CN_DIGITS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _parse_cn_number(text: str) -> int | None:
+    text = str(text or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    if text == "半":
+        return 30
+    if text in _CN_DIGITS:
+        return _CN_DIGITS[text]
+    if "百" in text:
+        left, _, right = text.partition("百")
+        high = _parse_cn_number(left) if left else 1
+        low = _parse_cn_number(right) if right else 0
+        if high is None or low is None:
+            return None
+        return high * 100 + low
+    if "十" in text:
+        left, _, right = text.partition("十")
+        high = _parse_cn_number(left) if left else 1
+        low = _parse_cn_number(right) if right else 0
+        if high is None or low is None:
+            return None
+        return high * 10 + low
+    total = 0
+    for ch in text:
+        if ch not in _CN_DIGITS:
+            return None
+        total = total * 10 + _CN_DIGITS[ch]
+    return total
+
+
+def _extract_alarm_song(text: str) -> str:
+    raw = str(text or "").strip()
+    patterns = [
+        r"用(.{1,40}?)(?:唤醒|叫醒|叫我|喊醒|起床)",
+        r"(?:播放|放|播)(.{1,40}?)(?:唤醒|叫醒|叫我|喊醒|起床)",
+        r"(?:闹钟|叫醒|唤醒|喊醒|起床).{0,12}用(.{1,40})$",
+        r"用(.{1,40})$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if match:
+            song = match.group(1)
+            song = re.sub(r"^(?:一首|首|歌曲|歌|音乐|《)", "", song)
+            song = re.sub(r"(?:这首歌|这首|歌曲|歌|音乐|》)$", "", song)
+            return song.strip("《》“”\"' ，。！？,.!?")
+    return ""
+
+
+def _fast_alarm_intent(user_text: str) -> dict | None:
+    raw = str(user_text or "").strip()
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
+        return None
+
+    if re.search(r"(取消|关闭|关掉|删掉|不要|停掉).{0,8}闹钟", compact):
+        return {
+            "action": "cancel",
+            "relative_minutes": 0,
+            "time": "",
+            "song_query": "",
+            "repeat": "once",
+            "reason": "fast_cancel_alarm",
+        }
+
+    if not re.search(r"(闹钟|叫醒|唤醒|喊醒|叫我起床|叫我)", compact):
+        return None
+
+    repeat = "once"
+    if "每天" in compact or "每日" in compact:
+        repeat = "daily"
+    elif "工作日" in compact:
+        repeat = "workday"
+    elif "周末" in compact:
+        repeat = "weekend"
+
+    song_query = _extract_alarm_song(raw)
+
+    relative_minutes = 0
+    if "半小时" in compact:
+        relative_minutes = 30
+    else:
+        match = re.search(r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(分钟|分|小时|钟头)(?:后|之后|以后)", compact)
+        if match:
+            number = _parse_cn_number(match.group(1))
+            if number is not None:
+                relative_minutes = number * (60 if match.group(2) in {"小时", "钟头"} else 1)
+
+    if relative_minutes > 0:
+        return {
+            "action": "set",
+            "relative_minutes": max(1, min(24 * 60, relative_minutes)),
+            "time": "",
+            "song_query": song_query,
+            "repeat": repeat,
+            "reason": "fast_relative_alarm",
+        }
+
+    period = ""
+    match = re.search(
+        r"(明天|明早|早上|上午|中午|下午|晚上|夜里|今晚)?([0-9零〇一二两三四五六七八九十]{1,3})点(半|[0-9零〇一二两三四五六七八九十]{1,3}分?)?",
+        compact,
+    )
+    if match:
+        period = match.group(1) or ""
+        hour = _parse_cn_number(match.group(2))
+        minute_text = (match.group(3) or "").rstrip("分")
+        minute = 30 if minute_text == "半" else (_parse_cn_number(minute_text) if minute_text else 0)
+        if hour is not None and minute is not None:
+            if period in {"下午", "晚上", "夜里", "今晚"} and hour < 12:
+                hour += 12
+            elif period == "中午" and hour < 11:
+                hour += 12
+            hour %= 24
+            return {
+                "action": "set",
+                "relative_minutes": 0,
+                "time": f"{hour:02d}:{minute:02d}",
+                "song_query": song_query,
+                "repeat": repeat,
+                "reason": "fast_absolute_alarm",
+            }
+
+    return None
+
+
+async def classify_alarm_request(user_text: str) -> dict:
+    """Use the LLM to decide whether the user wants to set/cancel a wake alarm."""
+    fast = _fast_alarm_intent(user_text)
+    if fast:
+        print(f"[LLM] alarm_intent fast {fast}")
+        return fast
+
+    system = (
+        "你是一个严格的语义分类器，用来判断用户是否要设置或取消智能枕头闹钟。"
+        "只能输出 JSON，不要解释，不要 Markdown。"
+        f"\n当前时间：{_get_time_string()}，时区：{TIMEZONE}"
+        "\n\n输出格式："
+        '{"action":"set|cancel|none","relative_minutes":0,"time":"HH:MM或空","song_query":"唤醒歌曲或空","repeat":"once|daily|workday|weekend","reason":"很短原因"}'
+        "\n\n判定规则："
+        "\n- 用户说定闹钟、设置闹钟、几分钟/几小时后叫我、几点叫醒我、用某首歌唤醒 => action=set。"
+        "\n- 用户说取消闹钟、关闭闹钟、别叫我了 => action=cancel。"
+        "\n- 只是讨论闹钟功能、问怎么设置、问当前闹钟，不执行设置 => action=none。"
+        "\n- 相对时间如'十分钟后'、'半小时后'、'一个小时后'必须填 relative_minutes，time 留空。"
+        "\n- 绝对时间如'早上七点半'填 time='07:30'；晚上七点填 '19:00'；没有明确日期时 repeat 默认 once。"
+        "\n- 用户说'每天/工作日/周末'时 repeat 对应 daily/workday/weekend，否则 repeat=once。"
+        "\n- song_query 只填用于网易云搜索的歌曲关键词，去掉'用/唤醒/叫醒/闹钟'等口语；例如'用海屿你唤醒' => '海屿你'。"
+        "\n- 如果用户没有说歌曲，song_query 为空。"
+    )
+    fallback = {
+        "action": "none",
+        "relative_minutes": 0,
+        "time": "",
+        "song_query": "",
+        "repeat": "once",
+        "reason": "not_alarm",
+    }
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": str(user_text or "").strip()},
+            ],
+            max_tokens=192,
+            temperature=0,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        if content.startswith("```"):
+            content = content.strip("`")
+            if content.lower().startswith("json"):
+                content = content[4:].strip()
+        try:
+            obj = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                obj = json.loads(content[start:end + 1])
+            else:
+                raise
+
+        action = str(obj.get("action") or "none").strip().lower()
+        if action not in {"set", "cancel", "none"}:
+            action = "none"
+        repeat = str(obj.get("repeat") or "once").strip().lower()
+        if repeat not in {"once", "daily", "workday", "weekend"}:
+            repeat = "once"
+        try:
+            relative_minutes = int(float(obj.get("relative_minutes") or 0))
+        except (TypeError, ValueError):
+            relative_minutes = 0
+        result = {
+            "action": action,
+            "relative_minutes": max(0, min(24 * 60, relative_minutes)),
+            "time": str(obj.get("time") or "").strip()[:5],
+            "song_query": str(obj.get("song_query") or "").strip()[:80],
+            "repeat": repeat,
+            "reason": str(obj.get("reason") or "").strip()[:80],
+        }
+        if action == "set" and not result["relative_minutes"] and not result["time"]:
+            result["action"] = "none"
+        print(f"[LLM] alarm_intent {result}")
+        return result
+    except Exception as exc:
+        print(f"[LLM] classify_alarm_request error: {exc}")
         return fallback
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from datetime import datetime, timedelta
 from typing import Any
@@ -55,6 +56,22 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "allow_sleep_environment_control": True,
         "alert_method": "phone_only",
     },
+    "alarms": [
+        {
+            "id": "wake_alarm",
+            "enabled": False,
+            "time": "07:30",
+            "repeat": "daily",
+            "song_query": "小半",
+            "music_stage_seconds": 30,
+            "leave_confirm_seconds": 5,
+            "pillow_up_seconds": 3,
+            "pillow_down_seconds": 3,
+            "pillow_high_kpa": 5.0,
+            "pillow_low_kpa": 0.7,
+            "last_triggered_key": "",
+        }
+    ],
     "memory": [
         "用户喜欢低打扰、自然一点的表达，不喜欢太明显的 AI 味。",
         "睡眠时不要主动语音播报、闪灯或亮屏。",
@@ -101,6 +118,24 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+def _to_int_range(value: Any, default: int, low: int, high: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def _to_float_range(value: Any, default: float, low: float, high: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(low, min(high, number))
+
+
 def _normalize_periods(periods: Any) -> list[dict[str, Any]]:
     defaults = {item["name"]: item for item in DEFAULT_SETTINGS["quiet_periods"]}
     incoming = {}
@@ -121,6 +156,37 @@ def _normalize_periods(periods: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalize_alarms(alarms: Any) -> list[dict[str, Any]]:
+    default = DEFAULT_SETTINGS["alarms"][0]
+    incoming = alarms if isinstance(alarms, list) else []
+    normalized: list[dict[str, Any]] = []
+
+    for idx, item in enumerate(incoming[:5]):
+        if not isinstance(item, dict):
+            continue
+        alarm = _deep_merge(default, item)
+        repeat = str(alarm.get("repeat") or default["repeat"]).strip().lower()
+        if repeat not in {"once", "daily", "workday", "weekend"}:
+            repeat = default["repeat"]
+        alarm_id = str(alarm.get("id") or f"alarm_{idx + 1}").strip()[:40]
+        normalized.append({
+            "id": alarm_id or f"alarm_{idx + 1}",
+            "enabled": _to_bool(alarm.get("enabled"), bool(default["enabled"])),
+            "time": _time_text(alarm.get("time"), default["time"]),
+            "repeat": repeat,
+            "song_query": str(alarm.get("song_query") or default["song_query"]).strip()[:80],
+            "music_stage_seconds": _to_int_range(alarm.get("music_stage_seconds"), 30, 10, 600),
+            "leave_confirm_seconds": _to_int_range(alarm.get("leave_confirm_seconds"), 5, 3, 60),
+            "pillow_up_seconds": _to_int_range(alarm.get("pillow_up_seconds"), 3, 1, 10),
+            "pillow_down_seconds": _to_int_range(alarm.get("pillow_down_seconds"), 3, 1, 10),
+            "pillow_high_kpa": _to_float_range(alarm.get("pillow_high_kpa"), 5.0, 0.0, 10.0),
+            "pillow_low_kpa": _to_float_range(alarm.get("pillow_low_kpa"), 0.7, 0.0, 10.0),
+            "last_triggered_key": str(alarm.get("last_triggered_key") or "")[:80],
+        })
+
+    return normalized or [copy.deepcopy(default)]
+
+
 def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
     settings = _deep_merge(DEFAULT_SETTINGS, data or {})
 
@@ -134,6 +200,7 @@ def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
     }
 
     settings["quiet_periods"] = _normalize_periods(settings.get("quiet_periods"))
+    settings["alarms"] = _normalize_alarms(settings.get("alarms"))
 
     rule_defaults = DEFAULT_SETTINGS["quiet_rules"]
     rules = _deep_merge(rule_defaults, settings.get("quiet_rules") or {})
