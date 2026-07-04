@@ -56,6 +56,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "allow_sleep_environment_control": True,
         "alert_method": "phone_only",
     },
+    "pillow_calibration": {
+        "saved_kpa": 3.2,
+        "saved_at": "",
+        "snore_adjust_enabled": True,
+    },
     "alarms": [
         {
             "id": "wake_alarm",
@@ -216,6 +221,22 @@ def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
         )
     }
     settings["quiet_rules"]["alert_method"] = str(rules.get("alert_method") or "phone_only")[:40]
+
+    calibration_defaults = DEFAULT_SETTINGS["pillow_calibration"]
+    calibration = _deep_merge(calibration_defaults, settings.get("pillow_calibration") or {})
+    settings["pillow_calibration"] = {
+        "saved_kpa": _to_float_range(
+            calibration.get("saved_kpa"),
+            float(calibration_defaults["saved_kpa"]),
+            0.0,
+            10.0,
+        ),
+        "saved_at": str(calibration.get("saved_at") or "")[:40],
+        "snore_adjust_enabled": _to_bool(
+            calibration.get("snore_adjust_enabled"),
+            bool(calibration_defaults["snore_adjust_enabled"]),
+        ),
+    }
 
     memory = settings.get("memory") or []
     if isinstance(memory, str):
