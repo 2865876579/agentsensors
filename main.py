@@ -654,6 +654,105 @@ async def broadcast_to_apps(payload: dict) -> None:
         app_clients.pop(app_id, None)
 
 
+def build_settings_update_for_ai_persona(persona: str) -> dict | None:
+    """Map ESP32/TJC AI persona keys to the H5 permanent personality settings."""
+    key = str(persona or "").strip().upper()
+    if key == "GENTLE":
+        return {
+            "personality": {
+                "tone": "gentle",
+                "style": "balanced",
+                "initiative": "normal",
+                "description": "温柔陪伴、自然克制，像真实的枕边生活助手。",
+            }
+        }
+    if key == "PRO":
+        return {
+            "personality": {
+                "tone": "pro",
+                "style": "short",
+                "initiative": "normal",
+                "description": "专业健康、简洁可靠，重点关注睡眠和传感器状态。",
+            }
+        }
+    if key == "SHORT":
+        return {
+            "personality": {
+                "tone": "short",
+                "style": "short",
+                "initiative": "low",
+                "description": "简短直接、少打扰，只给必要提醒。",
+            }
+        }
+    if key == "SLEEP":
+        return {
+            "personality": {
+                "tone": "sleep",
+                "style": "short",
+                "initiative": "low",
+                "description": "睡眠守护、低打扰、少出声，优先帮助用户放松入睡。",
+            }
+        }
+    return None
+
+
+async def handle_esp32_ai_persona_update(persona: str, client_id: str = "") -> dict | None:
+    update = build_settings_update_for_ai_persona(persona)
+    if not update:
+        print(f"[ESP32] unknown ai_persona={persona!r} client={client_id}")
+        return None
+
+    settings = save_user_settings(update)
+    payload = {
+        "type": "settings_state",
+        "ok": True,
+        "source": "esp32_tjc",
+        "ai_persona": str(persona or "").strip().upper(),
+        "client_id": client_id,
+        "settings": settings,
+        "quiet_status": get_quiet_status(settings),
+        "alarm_state": dict(alarm_runtime),
+    }
+    await broadcast_to_apps(payload)
+    print(
+        f"[ESP32] ai_persona={payload['ai_persona']} saved "
+        f"tone={settings.get('personality', {}).get('tone')} "
+        f"style={settings.get('personality', {}).get('style')}"
+    )
+    return payload
+
+
+async def handle_esp32_pillow_calibration_save(saved_kpa, client_id: str = "") -> dict | None:
+    try:
+        value = float(saved_kpa)
+    except (TypeError, ValueError):
+        print(f"[ESP32] invalid pillow calibration saved_kpa={saved_kpa!r} client={client_id}")
+        return None
+    if not math.isfinite(value):
+        print(f"[ESP32] invalid pillow calibration saved_kpa={saved_kpa!r} client={client_id}")
+        return None
+    value = max(0.0, min(10.0, value))
+    settings = save_user_settings({
+        "pillow_calibration": {
+            "saved_kpa": round(value, 1),
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    })
+    payload = {
+        "type": "settings_state",
+        "ok": True,
+        "source": "esp32_tjc",
+        "event": "pillow_calibration_save",
+        "client_id": client_id,
+        "settings": settings,
+        "quiet_status": get_quiet_status(settings),
+        "alarm_state": dict(alarm_runtime),
+    }
+    await broadcast_to_apps(payload)
+    print(f"[ESP32] pillow calibration saved {value:.1f} kPa client={client_id}")
+    return payload
+
+
 async def request_sensor_data(client_id: str | None = None) -> bool:
     """Ask the active ESP32 to return one sensor_data frame."""
     target = pick_esp32_client(client_id)
@@ -2445,6 +2544,35 @@ async def esp32_endpoint(websocket: WebSocket):
                             future.set_result(json.dumps(sensor_payload, ensure_ascii=False))
                             print(f"[ESP32] sensor_data resolved request_id={request_id}")
                     schedule_sensor_automations(client_id, sensor_payload)
+
+                elif msg_type == "ai_persona":
+                    persona = data.get("persona") or data.get("mode") or ""
+                    payload = await handle_esp32_ai_persona_update(persona, client_id)
+                    if payload:
+                        await send_json_to_esp32(client_id, {
+                            "type": "status",
+                            "msg": f"AI ??????{payload['ai_persona']}",
+                        })
+                    else:
+                        await send_json_to_esp32(client_id, {
+                            "type": "status",
+                            "msg": "AI ???????????",
+                        })
+
+                elif msg_type == "pillow_calibration_save":
+                    saved_kpa = data.get("saved_kpa")
+                    payload = await handle_esp32_pillow_calibration_save(saved_kpa, client_id)
+                    if payload:
+                        cal = payload.get("settings", {}).get("pillow_calibration", {})
+                        await send_json_to_esp32(client_id, {
+                            "type": "status",
+                            "msg": f"?????????{float(cal.get('saved_kpa', 0)):.1f} kPa",
+                        })
+                    else:
+                        await send_json_to_esp32(client_id, {
+                            "type": "status",
+                            "msg": "????????",
+                        })
 
                 # ========== 心跳 ==========
                 elif msg_type == "pump_result":
