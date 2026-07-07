@@ -46,6 +46,7 @@ from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
     chat_stream,
     classify_alarm_request,
+    classify_didi_ride_request,
     classify_music_request,
     classify_pre_sleep_light_reply,
     generate_automation_reply,
@@ -54,6 +55,7 @@ from llm_deepseek import (
     set_led_callback,
     set_ir_device_callback,
     set_read_sensors_callback,
+    set_didi_ride_link_callback,
 )
 from tts_volc import synthesize
 from netease_music import find_playable_song, iter_song_opus_frames
@@ -72,6 +74,7 @@ from avatar_image2 import (
     generate_lcd_avatar,
     get_current_avatar_manifest,
 )
+from didi_mcp import create_basic_ride_link
 
 
 @asynccontextmanager
@@ -293,11 +296,42 @@ async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
         _sensor_futures.pop(request_id, None)
 
 # 注册回调
+
+async def _didi_ride_link_cb(
+    from_place: str,
+    to_place: str,
+    city: str,
+    product_category: str,
+    client_id: str,
+    turn_id: int,
+) -> str:
+    """LLM tool callback: generate a DiDi basic ride link and broadcast it to H5."""
+    result = await create_basic_ride_link(
+        from_place=from_place,
+        to_place=to_place,
+        city=city,
+        product_category=product_category,
+    )
+    payload = result.get("payload") if isinstance(result, dict) else None
+    if payload:
+        payload["client_id"] = client_id
+        payload["turn_id"] = turn_id
+        await broadcast_to_apps(payload)
+        await send_screen_status(
+            client_id,
+            "状态：已生成滴滴打车链接，请在手机端打开确认。",
+            event="didi_ride_link",
+        )
+    if isinstance(result, dict):
+        return result.get("message") or "滴滴打车链接已生成，请在手机上完成确认和支付。"
+    return "滴滴打车链接已生成，请在手机上完成确认和支付。"
+
 set_pc_command_callback(_pc_command_cb)
 set_pillow_callback(_pillow_cb)
 set_led_callback(_led_cb)
 set_ir_device_callback(_ir_device_cb)
 set_read_sensors_callback(_read_sensors_cb)
+set_didi_ride_link_callback(_didi_ride_link_cb)
 
 
 def is_exit_phrase(text: str) -> bool:
@@ -1910,6 +1944,141 @@ def quick_music_preroll_text(text: str) -> str:
     return "我先帮你找一下。"
 
 
+async def handle_didi_ride_request_by_ai(
+    websocket: WebSocket,
+    text: str,
+    request_id: str,
+    *,
+    client_id: str = "",
+    turn_id: int = 0,
+    source: str = "app_chat",
+    quiet_status: dict | None = None,
+) -> bool:
+    """AI 语义识别打车需求；识别为打车后调用滴滴 MCP 基础版。"""
+    intent = await classify_didi_ride_request(text)
+    if intent.get("action") != "ride":
+        return False
+
+    await send_app_message(websocket, {
+        "type": "app_chat_start",
+        "request_id": request_id,
+        "esp32_connected": bool(esp32_clients),
+        "device_tts": False,
+        "quiet_status": quiet_status,
+        "source": source,
+    })
+
+    result = await create_basic_ride_link(
+        from_place=intent.get("from_place", ""),
+        to_place=intent.get("to_place", ""),
+        city=intent.get("city", ""),
+        product_category=intent.get("product_category", ""),
+    )
+    reply = result.get("message") if isinstance(result, dict) else ""
+    if not reply:
+        reply = "滴滴打车链接已生成，请在手机上完成确认和支付。"
+
+    payload = result.get("payload") if isinstance(result, dict) else None
+    if payload:
+        payload["client_id"] = client_id
+        payload["turn_id"] = turn_id
+        payload["request_id"] = request_id
+        payload["source"] = source
+        await broadcast_to_apps(payload)
+        if client_id:
+            await send_screen_status(
+                client_id,
+                "状态：已生成滴滴打车链接，请在手机端打开确认。",
+                event="didi_ride_link",
+            )
+
+    await send_app_message(websocket, {
+        "type": "app_chat_delta",
+        "request_id": request_id,
+        "delta": reply,
+        "text": reply,
+        "source": source,
+    })
+    await send_app_message(websocket, {
+        "type": "app_chat_done",
+        "request_id": request_id,
+        "text": reply,
+        "turn_id": turn_id,
+        "device_tts": False,
+        "quiet_status": quiet_status,
+        "source": source,
+    })
+    return True
+
+
+
+async def handle_pc_agent_task_once(
+    websocket: WebSocket,
+    text: str,
+    request_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    """MCP/PC Agent panel chat: run cloud tools without requiring ESP32 online."""
+    user_text = (text or "").strip()
+    request_id = request_id or f"mcp-task-{int(time.time() * 1000)}"
+    if not user_text:
+        return
+
+    await send_app_message(websocket, {
+        "type": "app_chat_start",
+        "request_id": request_id,
+        "esp32_connected": bool(esp32_clients),
+        "device_tts": False,
+        "source": "pc_agent_task",
+    })
+
+    history_key = f"mcp:{(session_id or str(id(websocket))).strip() or str(id(websocket))}"
+    history = app_chat_histories.setdefault(history_key, [])
+    full_reply = ""
+    target = pick_esp32_client() or ""
+    turn_id = next_turn_id(target) if target else int(time.time() * 1000) % 1000000000
+
+    try:
+        if await handle_didi_ride_request_by_ai(
+            websocket,
+            user_text,
+            request_id,
+            client_id=target,
+            turn_id=turn_id,
+            source="pc_agent_task",
+        ):
+            return
+
+        async for delta in chat_stream(user_text, history, client_id=target, turn_id=turn_id):
+            if not delta:
+                continue
+            full_reply += delta
+            await send_app_message(websocket, {
+                "type": "app_chat_delta",
+                "request_id": request_id,
+                "delta": delta,
+                "text": full_reply,
+                "source": "pc_agent_task",
+            })
+
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": full_reply.strip() or "任务已完成。",
+            "turn_id": turn_id,
+            "device_tts": False,
+            "source": "pc_agent_task",
+        })
+    except Exception as exc:
+        print(f"[PC-Agent-task] error: {exc}")
+        await send_app_message(websocket, {
+            "type": "app_chat_error",
+            "request_id": request_id,
+            "error": str(exc)[:160],
+            "source": "pc_agent_task",
+        })
+
+
 async def handle_app_chat_once(
     websocket: WebSocket,
     text: str,
@@ -1922,6 +2091,21 @@ async def handle_app_chat_once(
     if not user_text:
         return
 
+    settings = load_user_settings()
+    quiet_status = get_quiet_status(settings)
+
+    # 滴滴打车是云端 MCP 能力，不依赖 ESP32 在线；先做 AI 语义分类。
+    if await handle_didi_ride_request_by_ai(
+        websocket,
+        user_text,
+        request_id,
+        client_id="",
+        turn_id=int(time.time() * 1000) % 1000000000,
+        source="app_chat",
+        quiet_status=quiet_status,
+    ):
+        return
+
     target = pick_esp32_client()
     if not target:
         await send_app_message(websocket, {
@@ -1931,8 +2115,6 @@ async def handle_app_chat_once(
         })
         return
 
-    settings = load_user_settings()
-    quiet_status = get_quiet_status(settings)
     allow_device_tts = not is_ai_voice_blocked(settings)
     allow_device_status = not is_ai_screen_blocked(settings)
 
@@ -1974,6 +2156,7 @@ async def handle_app_chat_once(
             "source": "app_chat",
             "turn_id": turn_id,
         })
+
     await send_app_message(websocket, {
         "type": "app_chat_start",
         "request_id": request_id,
@@ -2867,6 +3050,25 @@ async def app_endpoint(websocket: WebSocket):
                     "ok": ok,
                     "esp32_connected": bool(esp32_clients),
                 }, ensure_ascii=False))
+            elif msg_type == "pc_agent_task":
+                request_id = str(data.get("request_id") or "")
+                try:
+                    await handle_pc_agent_task_once(
+                        websocket,
+                        str(data.get("text") or ""),
+                        request_id,
+                        str(data.get("session_id") or app_id),
+                    )
+                except Exception as exc:
+                    print(f"[PC-Agent-task] fatal error: {exc}")
+                    import traceback
+                    traceback.print_exc()
+                    await send_app_message(websocket, {
+                        "type": "app_chat_error",
+                        "request_id": request_id,
+                        "error": str(exc)[:160],
+                        "source": "pc_agent_task",
+                    })
             elif msg_type == "app_chat":
                 request_id = str(data.get("request_id") or "")
                 try:
