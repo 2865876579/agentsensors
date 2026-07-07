@@ -25,6 +25,7 @@ import uuid
 import opuslib
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 
 try:
     from zoneinfo import ZoneInfo
@@ -3254,6 +3255,56 @@ async def health():
         "has_sensor_data": latest_sensor_data is not None,
         "version": APP_VERSION,
     }
+
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+WEB_MEDIA_TYPES = {
+    "xiaoan-h5-v5.html": "text/html; charset=utf-8",
+    "lucide.min.js": "application/javascript; charset=utf-8",
+    "xiaoan-bedroom.jpg": "image/jpeg",
+    "xiaoan-bedroom-anime-soft.png": "image/png",
+    "xiaoan-device.png": "image/png",
+}
+
+
+def web_file_response(filename: str) -> FileResponse:
+    if filename not in WEB_MEDIA_TYPES:
+        raise HTTPException(status_code=404, detail="web asset not found")
+    path = WEB_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="web asset not uploaded")
+    return FileResponse(path, media_type=WEB_MEDIA_TYPES[filename])
+
+
+@app.get("/")
+@app.get("/xiaoan-h5-v5.html")
+async def h5_index():
+    return web_file_response("xiaoan-h5-v5.html")
+
+
+@app.get("/lucide.min.js")
+async def h5_lucide():
+    return web_file_response("lucide.min.js")
+
+
+@app.get("/xiaoan-bedroom.jpg")
+async def h5_bedroom():
+    return web_file_response("xiaoan-bedroom.jpg")
+
+
+@app.get("/xiaoan-bedroom-anime-soft.png")
+async def h5_bedroom_anime():
+    return web_file_response("xiaoan-bedroom-anime-soft.png")
+
+
+@app.get("/xiaoan-device.png")
+async def h5_device():
+    return web_file_response("xiaoan-device.png")
+
+
+@app.get("/h5/{filename}")
+async def h5_asset(filename: str):
+    return web_file_response(filename)
 
 
 if __name__ == "__main__":
