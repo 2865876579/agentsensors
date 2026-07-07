@@ -411,7 +411,7 @@ def build_ai_context_prompt(settings: dict[str, Any] | None = None) -> str:
 - {quiet_text}
 - 这些设置是用户在 App 中保存的永久机制，不是临时聊天上下文。
 - 睡眠勿扰时间段内，你必须低打扰：不要主动语音播报、不要主动亮屏、不要主动开灯/闪灯、不要主动让 PC Agent 做有打扰感的任务。
-- 睡眠勿扰时间段内，可以静默处理：手机端文字回复、静默记录、必要且轻微的枕头调节，以及根据传感器数据静默调节风扇、加湿器等环境外设。
+- 睡眠勿扰时间段内，可以静默处理：手机端文字回复、静默记录、必要且轻微的枕头调节，以及根据传感器数据静默调节风扇、加湿器、空调等环境外设。
 - 环境外设调节必须低频、低打扰、有明确环境依据；不要为了展示效果反复切换。
 - 即使你认为某个动作有帮助，也必须服从云端策略拦截；不能用文字承诺已经执行被拦截的动作。
 """.strip()
@@ -440,7 +440,7 @@ def guard_ai_action(action_type: str, **kwargs: Any) -> dict[str, Any]:
     if action_type == "ir_device":
         is_off = action in {"off", "close", "shutdown"}
         device = str(kwargs.get("device") or "").lower()
-        sleep_env_devices = {"fan", "humidifier", "humid"}
+        sleep_env_devices = {"fan", "humidifier", "humid", "air_conditioner", "ac", "aircon"}
         if not is_off and device in sleep_env_devices and rules.get("allow_sleep_environment_control"):
             return {"allowed": True, "reason": "", "overrides": {}, "quiet_status": quiet_status}
         if not is_off:
