@@ -38,7 +38,9 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import time
 import urllib.parse
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from config import SERVER_HOST, SERVER_PORT, TIMEZONE
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
@@ -64,6 +66,12 @@ from user_settings import (
     load_user_settings,
     save_user_settings,
 )
+from avatar_image2 import (
+    current_preview_path,
+    current_rgb666_path,
+    generate_lcd_avatar,
+    get_current_avatar_manifest,
+)
 
 
 @asynccontextmanager
@@ -74,6 +82,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Smart Pillow Cloud Server", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 APP_VERSION = "xiaozhi_realtime_v5"
 
 WAKE_TRIGGER_TEXT = "__wake__"
@@ -2721,6 +2736,76 @@ async def api_update_user_settings(payload: dict):
         "settings": settings,
         "quiet_status": quiet_status,
         "alarm_state": dict(alarm_runtime),
+    }
+
+
+@app.get("/api/avatar/current/manifest")
+async def api_avatar_current_manifest():
+    """当前 LCD AI 形象资源清单，ESP32/App 都可以读取。"""
+    return get_current_avatar_manifest()
+
+
+@app.get("/api/avatar/current/preview.png")
+async def api_avatar_current_preview():
+    path = current_preview_path()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="当前还没有生成过 LCD 形象预览")
+    return FileResponse(path, media_type="image/png", filename="preview.png")
+
+
+@app.get("/api/avatar/current/avatar_base_rgb666.bin")
+async def api_avatar_current_rgb666():
+    path = current_rgb666_path()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="当前还没有生成过 LCD RGB666 资源")
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename="avatar_base_rgb666.bin",
+    )
+
+
+@app.post("/api/avatar/generate")
+async def api_avatar_generate(payload: dict):
+    """调用 image2 生成 AI 形象，并转换为 ESP32 LCD 可直接显示的 RGB666。"""
+    prompt = str(payload.get("prompt") or "").strip()
+    try:
+        manifest = await generate_lcd_avatar(prompt)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)[:240])
+
+    await broadcast_to_apps({
+        "type": "avatar_generated",
+        "ok": True,
+        "manifest": manifest,
+    })
+    return manifest
+
+
+@app.post("/api/avatar/sync")
+async def api_avatar_sync(payload: dict):
+    """通知 ESP32 有新的 LCD 形象资源可下载。ESP32 热切换逻辑随后接入。"""
+    manifest = get_current_avatar_manifest()
+    if not manifest.get("ok"):
+        raise HTTPException(status_code=404, detail=manifest.get("error") or "当前没有可同步的形象")
+
+    target = pick_esp32_client(payload.get("client_id"))
+    ok = await send_json_to_esp32(target, {
+        "type": "avatar_update",
+        "manifest": manifest,
+        "manifest_url": (manifest.get("urls") or {}).get("manifest"),
+        "rgb666_url": (manifest.get("urls") or {}).get("rgb666"),
+        "width": manifest.get("width"),
+        "height": manifest.get("height"),
+        "crc32": manifest.get("crc32"),
+        "bin_size": manifest.get("bin_size"),
+    }) if target else False
+
+    return {
+        "ok": ok,
+        "esp32_connected": bool(target),
+        "manifest": manifest,
+        "note": "云端资源已准备好；ESP32 端需要接入 avatar_update 下载与切换逻辑。",
     }
 
 

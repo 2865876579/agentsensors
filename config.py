@@ -89,3 +89,21 @@ SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))  # 监听端口1
 NETEASE_COOKIE = os.getenv("NETEASE_COOKIE", "")
 NETEASE_BR = int(os.getenv("NETEASE_BR", "320000"))
 NETEASE_MAX_PLAY_SECONDS = int(os.getenv("NETEASE_MAX_PLAY_SECONDS", "360"))
+
+# ==================== Image2 AI 形象生成配置 ====================
+# 只在云端使用，App/ESP32 不直接接触密钥。
+IMAGE2_API_KEY = os.getenv("IMAGE2_API_KEY", "")
+IMAGE2_BASE_URL = os.getenv("IMAGE2_BASE_URL", "https://www.fhl.mom")
+# Responses API: text model calls the image_generation tool; image model renders the picture.
+IMAGE2_TEXT_MODEL = os.getenv("IMAGE2_TEXT_MODEL", "gpt-5.5")
+IMAGE2_MODEL = os.getenv("IMAGE2_MODEL", "gpt-image-2-codex")
+IMAGE2_QUALITY = os.getenv("IMAGE2_QUALITY", "auto")
+IMAGE2_REASONING_EFFORT = os.getenv("IMAGE2_REASONING_EFFORT", "xhigh")
+# Optional proxy used only by image2 requests, e.g. http://127.0.0.1:7890
+IMAGE2_PROXY = os.getenv("IMAGE2_PROXY", "")
+
+# ESP32 后续下载 LCD 形象资源时使用的公网地址前缀。
+AVATAR_PUBLIC_BASE_URL = os.getenv(
+    "AVATAR_PUBLIC_BASE_URL",
+    f"http://{SERVER_HOST}:{SERVER_PORT}",
+)

@@ -10,3 +10,4 @@ python-dotenv==1.0.1
 numpy==1.26.4
 miniaudio==1.71
 opuslib==3.0.1
+pillow==12.2.0
