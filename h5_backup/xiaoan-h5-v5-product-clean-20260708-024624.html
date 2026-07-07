@@ -1002,10 +1002,10 @@ body{
   align-items:center;
   gap:10px;
   padding:11px 12px;
-  border:1px solid rgba(255,255,255,.12);
+  border:1px solid rgba(105,229,193,.18);
   border-radius:20px;
-  background:rgba(255,255,255,.045);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.12);
+  background:linear-gradient(145deg,rgba(105,229,193,.11),rgba(168,183,255,.055));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
 }
 .product-mcp-note .mcp-badge{
   width:48px;
@@ -1069,8 +1069,7 @@ body{
   padding:12px;
   border:1px solid rgba(255,255,255,.12);
   border-radius:22px;
-  background:rgba(255,255,255,.042);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10);
+  background:rgba(255,255,255,.045);
 }
 .product-mcp-layer .mini-title{
   justify-content:space-between;
@@ -1088,9 +1087,9 @@ body{
 .mcp-service{
   min-height:74px;
   padding:10px 8px;
-  border:1px solid rgba(255,255,255,.115);
+  border:1px solid rgba(255,255,255,.12);
   border-radius:18px;
-  background:rgba(255,255,255,.043);
+  background:rgba(255,255,255,.055);
   display:flex;
   flex-direction:column;
   justify-content:space-between;
@@ -1129,10 +1128,9 @@ body{
 .mcp-config-panel{
   margin-top:10px;
   padding:11px;
-  border:1px solid rgba(255,255,255,.12);
+  border:1px solid rgba(105,229,193,.16);
   border-radius:20px;
-  background:rgba(255,255,255,.04);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+  background:rgba(5,8,11,.22);
 }
 .mcp-config-grid{
   display:grid;
@@ -1153,7 +1151,7 @@ body{
   height:38px;
   border:1px solid rgba(255,255,255,.12);
   border-radius:14px;
-  background:rgba(255,255,255,.052);
+  background:rgba(255,255,255,.06);
   color:var(--text);
   padding:0 10px;
   outline:none;
@@ -1834,11 +1832,7 @@ body{
 #control .pc-agent-task-card,
 #control .product-mcp-layer,
 #control .product-mcp-note{
-  background:rgba(255,255,255,.045);
-}
-#control .mcp-service,
-#control .mcp-config-panel{
-  background:rgba(255,255,255,.04);
+  background:rgba(255,255,255,.052);
 }
 
 
@@ -2328,18 +2322,385 @@ body{
 .avatar-status{min-height:16px;font-size:10px;color:var(--muted);line-height:1.35}
 @media (max-width:380px){.avatar-lab-body{grid-template-columns:104px 1fr;gap:10px}.avatar-preview{height:150px}.avatar-actions button{font-size:11px}}
 
+/* product-clean layout pass: reduce clutter, fix overlap, clarify page hierarchy */
+:root{
+  --clean-card:rgba(18,22,34,.42);
+  --clean-card-2:rgba(255,255,255,.055);
+  --clean-line:rgba(255,255,255,.16);
+  --clean-line-strong:rgba(255,255,255,.24);
+  --clean-shadow:0 14px 34px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.16);
+}
+.screen{
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding-bottom:112px!important;
+  scrollbar-width:none;
+}
+.screen::-webkit-scrollbar{display:none}
+.page{
+  padding-bottom:18px;
+}
+.page.active{
+  display:flex!important;
+  flex-direction:column;
+  gap:12px;
+}
+.section,
+.control,
+.insight,
+.control-panel,
+.metric,
+.feed-item,
+.bubble,
+.product-mcp-layer,
+.product-mcp-note,
+.mcp-config-panel,
+.wave-card{
+  border-radius:22px!important;
+  border-color:var(--clean-line)!important;
+  background:var(--clean-card)!important;
+  box-shadow:var(--clean-shadow)!important;
+  backdrop-filter:blur(14px) saturate(1.05)!important;
+  -webkit-backdrop-filter:blur(14px) saturate(1.05)!important;
+}
+.section{
+  margin-top:0!important;
+  padding:14px!important;
+}
+.panel-title{
+  margin-bottom:10px!important;
+  min-height:24px;
+}
+.panel-title h2{
+  font-size:16px!important;
+  letter-spacing:.02em;
+}
+.panel-title span{
+  font-size:11px!important;
+  white-space:nowrap;
+  color:rgba(238,244,255,.62)!important;
+}
+.topbar{
+  position:sticky;
+  top:0;
+  z-index:30;
+  padding-bottom:10px!important;
+  background:linear-gradient(180deg,rgba(14,18,31,.72),rgba(14,18,31,.16) 75%,transparent)!important;
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+}
+.brand strong{font-size:19px!important}
+.brand span{font-size:11px!important}
+.status-pill{
+  height:32px!important;
+  padding:0 10px!important;
+  border-radius:16px!important;
+}
+.tabbar{
+  left:50%!important;
+  right:auto!important;
+  bottom:14px!important;
+  transform:translateX(-50%)!important;
+  width:calc(100% - 28px)!important;
+  max-width:402px!important;
+  z-index:50!important;
+  height:68px!important;
+  padding:8px!important;
+  grid-template-columns:repeat(4,1fr)!important;
+  border-radius:26px!important;
+  background:rgba(14,17,27,.82)!important;
+  border-color:rgba(255,255,255,.18)!important;
+  box-shadow:0 18px 44px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.18)!important;
+}
+.tab{
+  height:52px!important;
+  min-height:0!important;
+  border-radius:20px!important;
+  gap:4px!important;
+  color:rgba(236,243,255,.60)!important;
+}
+.tab i{width:18px!important;height:18px!important}
+.tab span{font-size:10px!important}
+.tab.active{
+  color:#fff!important;
+  background:linear-gradient(135deg,rgba(130,231,255,.18),rgba(137,240,205,.12))!important;
+}
 
+/* 首页：只保留核心控制和设备，避免信息散乱 */
+#home{
+  gap:10px!important;
+}
+#home .scene{
+  min-height:158px!important;
+  border-radius:28px!important;
+  padding:0!important;
+  overflow:hidden;
+}
+#home .scene::before{opacity:.68}
+#home .scene-head{
+  padding:16px!important;
+}
+#home .scene-title h1{
+  max-width:240px!important;
+  font-size:21px!important;
+  line-height:1.15!important;
+}
+#home .mode-chip{
+  height:42px!important;
+  padding:7px 10px!important;
+  border-radius:18px!important;
+}
+#home .mode-chip span{font-size:9px!important}
+#home .mode-chip strong{font-size:12px!important}
+#home .live-badge{
+  left:16px!important;
+  bottom:14px!important;
+  height:34px!important;
+  max-width:230px!important;
+  padding:0 12px!important;
+  font-size:11px!important;
+}
+#home .insight{
+  display:grid!important;
+  grid-template-columns:28px 1fr;
+  align-items:center;
+  gap:10px;
+  margin-top:0!important;
+  padding:12px!important;
+}
+#home .insight i{
+  width:28px!important;
+  height:28px!important;
+  padding:6px;
+  border-radius:12px;
+  background:rgba(130,231,255,.12);
+}
+#home .insight strong{font-size:13px!important}
+#home .insight span{
+  display:block!important;
+  margin-top:2px!important;
+  font-size:11px!important;
+  line-height:1.35!important;
+  display:-webkit-box!important;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+#home .control{
+  margin-top:0!important;
+  padding:13px!important;
+}
+#home .control-main{
+  grid-template-columns:92px 1fr!important;
+  gap:12px!important;
+  align-items:center!important;
+}
+#home .dial{
+  width:92px!important;
+  height:92px!important;
+}
+#home .dial::before{inset:8px!important}
+#home .dial-value strong{font-size:26px!important}
+#home .dial-value span{font-size:10px!important}
+#home .control-copy .label{font-size:10px!important}
+#home .control-copy h2{
+  font-size:16px!important;
+  margin:4px 0!important;
+}
+#home .range-row{
+  margin-top:12px!important;
+  grid-template-columns:38px 1fr 38px!important;
+}
+#home .round-btn{
+  width:38px!important;
+  height:38px!important;
+}
+#home .quick{
+  display:grid!important;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:8px!important;
+  margin-top:0!important;
+}
+#home .quick button{
+  min-width:0!important;
+  min-height:58px!important;
+  padding:8px 4px!important;
+  border-radius:18px!important;
+  font-size:11px!important;
+  line-height:1.15!important;
+}
+#home .quick button i{
+  width:18px!important;
+  height:18px!important;
+  margin-bottom:3px;
+}
+#home .home-device-grid{
+  display:grid!important;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:8px!important;
+  margin-top:0!important;
+}
+#home .home-device-card{
+  min-height:108px!important;
+  height:108px!important;
+  padding:9px 8px!important;
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:space-between!important;
+  overflow:hidden!important;
+}
+#home .home-device-card .mini-title{
+  min-height:22px!important;
+  margin:0!important;
+  gap:4px!important;
+}
+#home .home-device-card .mini-title span{
+  font-size:11px!important;
+}
+#home .home-device-card .mini-title i{
+  width:15px!important;
+  height:15px!important;
+}
+#home .home-device-card .mcp-device-badge{
+  display:none!important;
+}
+#home .home-device-card>strong{
+  margin:4px 0 0!important;
+  font-size:22px!important;
+  line-height:1!important;
+}
+#home .home-device-card .product-device-meta{
+  display:none!important;
+}
+#home .segmented.compact{
+  grid-template-columns:1fr 1fr!important;
+  gap:7px!important;
+  margin-top:0!important;
+}
+#home .segmented.compact button{
+  min-height:28px!important;
+  border-radius:14px!important;
+  font-size:11px!important;
+}
+#home .led-panel .led-slider{
+  position:static!important;
+  width:100%!important;
+  height:8px!important;
+  margin:6px 0 2px!important;
+}
+#home .led-panel .led-row{
+  position:static!important;
+  display:flex!important;
+  justify-content:space-between!important;
+  font-size:10px!important;
+  margin-top:-2px!important;
+}
+#home .command,
+#home > .section{
+  display:none!important;
+}
 
-/* user fix 2026-07-08: restore previous compact MCP service blocks, keep transparent glass style */
+/* AI 页：对话和形象分开，不再堆说明文案 */
+#ai .section{
+  padding:14px!important;
+}
+#ai .chat{
+  max-height:315px!important;
+  overflow:auto!important;
+  padding-right:2px;
+}
+#ai .bubble{
+  max-width:92%!important;
+  padding:11px 12px!important;
+  font-size:13px!important;
+}
+#ai > .command{
+  margin-top:0!important;
+}
+#ai .avatar-lab{
+  margin-top:0!important;
+}
+#ai .avatar-lab-body{
+  grid-template-columns:108px minmax(0,1fr)!important;
+  gap:10px!important;
+}
+#ai .avatar-preview{
+  height:146px!important;
+  border-radius:20px!important;
+}
+#ai .avatar-workshop textarea{
+  height:68px!important;
+  border-radius:16px!important;
+}
+#ai .avatar-actions button{
+  height:36px!important;
+}
+#ai > .feed{
+  display:none!important;
+}
+
+/* MCP 页：产品化为服务编排，不把所有配置铺成一团 */
+#control .manual-stack{
+  gap:12px!important;
+  margin-top:0!important;
+}
+#control .product-control-title h2{
+  font-size:0!important;
+}
+#control .product-control-title h2::before{
+  content:"服务编排";
+  font-size:16px!important;
+}
 #control .product-mcp-note{
-  background:linear-gradient(145deg,rgba(105,229,193,.09),rgba(168,183,255,.045))!important;
-  border:1px solid rgba(105,229,193,.18)!important;
+  padding:12px!important;
+  gap:10px!important;
+}
+#control .product-mcp-note .mcp-badge{
+  width:42px!important;
+  height:42px!important;
+  border-radius:17px!important;
+  font-size:13px!important;
+}
+#control .product-mcp-note strong{
+  font-size:14px!important;
+}
+#control .product-mcp-note span{
+  font-size:11px!important;
+  line-height:1.4!important;
+}
+#control .manual-grid{
+  display:block!important;
+}
+#control .pc-agent-task-card{
+  min-height:0!important;
+  padding:12px!important;
+}
+#control .pc-agent-task-card>strong{
+  font-size:18px!important;
+  margin:6px 0 4px!important;
+}
+#control .pc-agent-task-card .product-device-meta{
+  font-size:11px!important;
+  margin-bottom:8px!important;
+}
+#control .pc-agent-task-card .pc-chat{
+  max-height:104px!important;
+  min-height:52px!important;
+  margin-top:8px!important;
+  overflow:auto!important;
+}
+#control .pc-agent-task-card .pc-chat .bubble{
+  font-size:12px!important;
+  line-height:1.45!important;
+}
+#control .pc-command{
+  margin-top:10px!important;
+}
+#control .pc-command input{
+  height:44px!important;
 }
 #control .product-mcp-layer{
   padding:12px!important;
-  border:1px solid rgba(255,255,255,.13)!important;
-  background:rgba(255,255,255,.048)!important;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.12)!important;
 }
 #control .mcp-service-grid{
   grid-template-columns:repeat(2,minmax(0,1fr))!important;
@@ -2350,8 +2711,6 @@ body{
   min-height:96px!important;
   padding:10px!important;
   border-radius:18px!important;
-  background:rgba(255,255,255,.052)!important;
-  border:1px solid rgba(255,255,255,.14)!important;
 }
 #control .mcp-service i{
   width:22px!important;
@@ -2360,10 +2719,9 @@ body{
 }
 #control .mcp-service strong{
   font-size:14px!important;
-  margin-top:0!important;
 }
 #control .mcp-service span{
-  min-height:24px!important;
+  min-height:24px;
   font-size:10px!important;
   line-height:1.35!important;
 }
@@ -2378,15 +2736,12 @@ body{
   border-radius:18px!important;
   max-height:184px!important;
   overflow:auto!important;
-  background:rgba(255,255,255,.045)!important;
-  border:1px solid rgba(255,255,255,.13)!important;
 }
 #control .mcp-config-grid{
   grid-template-columns:repeat(2,minmax(0,1fr))!important;
   gap:7px!important;
 }
 #control .mcp-config-field{
-  min-width:0!important;
   gap:5px!important;
 }
 #control .mcp-config-field span{
@@ -2396,8 +2751,7 @@ body{
   height:32px!important;
   border-radius:13px!important;
   font-size:10px!important;
-  opacity:.9!important;
-  min-width:0!important;
+  opacity:.88;
 }
 #control .mcp-config-save{
   height:34px!important;
@@ -2406,116 +2760,98 @@ body{
   font-size:12px!important;
 }
 
-/* user fix 2026-07-08: keep pressure slider buttons inside the card */
-#home .control-copy{
-  min-width:0!important;
-  overflow:hidden!important;
+/* 状态页：纯看板，不抢主控制页 */
+#status .section{
+  padding:14px!important;
 }
-#home .range-row{
-  width:100%!important;
-  max-width:100%!important;
-  box-sizing:border-box!important;
-  grid-template-columns:32px minmax(0,1fr) 32px!important;
-  gap:6px!important;
-  padding:0 2px!important;
-  margin-top:8px!important;
-  overflow:hidden!important;
+#status .live-metrics{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:10px!important;
 }
-#home .range-row input[type=range]{
-  min-width:0!important;
-  width:100%!important;
-  display:block!important;
+#status .metric{
+  min-height:92px!important;
+  padding:12px!important;
 }
-#home .range-row .round-btn{
-  width:32px!important;
-  min-width:32px!important;
-  height:32px!important;
-  border-radius:15px!important;
+#status .metric .num{
+  font-size:28px!important;
 }
-@media (max-height:820px){
-  #home .range-row{grid-template-columns:30px minmax(0,1fr) 30px!important;gap:5px!important;margin-top:6px!important;padding:0 1px!important}
-  #home .range-row .round-btn{width:30px!important;min-width:30px!important;height:30px!important;border-radius:14px!important}
+#status .status-feed-lite{
+  gap:9px!important;
 }
-
-
-
-/* user layout update 2026-07-08: service alarm, settings avatar, simplified personality */
-#home .calibration-hint{display:block!important;margin-top:2px!important;color:rgba(235,244,255,.72)!important;font-size:10px!important;line-height:1.25!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-#settings .settings-avatar-lab{margin-top:0!important;overflow:hidden!important}
-#settings .settings-avatar-lab .avatar-lab-body{grid-template-columns:104px minmax(0,1fr)!important;gap:10px!important}
-#settings .settings-avatar-lab .avatar-preview{height:142px!important;border-radius:18px!important}
-#settings .settings-avatar-lab .avatar-workshop textarea{height:66px!important;min-height:66px!important;resize:none!important}
-#settings .personality-panel .personality-grid{grid-template-columns:1fr 1fr!important}
-#settings .personality-panel #settingDescription{height:54px!important;min-height:54px!important;resize:none!important}
-#control .service-alarm-panel{margin-top:10px!important;padding:10px!important;border-radius:18px!important;background:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.13)!important;gap:8px!important}
-#control .service-alarm-panel .manual-head strong{font-size:14px!important}
-#control .service-alarm-panel .manual-head span{font-size:10px!important;color:var(--muted)!important}
-#control .service-alarm-panel .setting-row{min-height:40px!important;padding:8px 9px!important;border-radius:14px!important}
-#control .service-alarm-panel .setting-row strong{font-size:12px!important}
-#control .service-alarm-panel .setting-row span{font-size:10px!important;color:var(--muted)!important}
-#control .service-alarm-panel .setting-grid{grid-template-columns:1fr 1fr!important;gap:7px!important}
-#control .service-alarm-panel .setting-field{gap:4px!important}
-#control .service-alarm-panel .setting-field label{font-size:10px!important;color:var(--muted)!important}
-#control .service-alarm-panel .setting-field input,#control .service-alarm-panel .setting-field select{height:34px!important;min-height:34px!important;padding:7px 9px!important;border-radius:13px!important;font-size:12px!important;background:rgba(255,255,255,.052)!important}
-#control .service-alarm-save{height:36px!important;margin-top:0!important;border-radius:15px!important;font-size:12px!important}
-#control .mcp-config-panel{max-height:150px!important}
-
-
-
-/* user polish 2026-07-08: PC Agent copy + title position */
-#control .pc-agent-task-card>strong{
-  display:block!important;
-  margin-top:12px!important;
-  margin-bottom:6px!important;
+#status .feed-item{
+  min-height:62px!important;
 }
-#control .pc-agent-task-card .pc-chat{
-  margin-top:8px!important;
+#status .wave-stack{
+  gap:10px!important;
+}
+#status .wave-card{
+  padding:12px!important;
+}
+#status .wave-card canvas{
+  height:56px!important;
 }
 
+/* 设置页：统一表单密度 */
+#settings .settings-stack{
+  gap:12px!important;
+}
+#settings .settings-panel{
+  padding:14px!important;
+  gap:10px!important;
+}
+#settings .setting-grid{
+  gap:9px!important;
+}
+#settings .setting-field input,
+#settings .setting-field select,
+#settings .setting-field textarea{
+  height:40px!important;
+  min-height:40px!important;
+  border-radius:14px!important;
+}
+#settings .setting-row{
+  min-height:50px!important;
+  border-radius:16px!important;
+}
 
-/* user fix 2026-07-08: MCP cards open one configuration panel on demand */
-#control .mcp-service{
-  cursor:pointer!important;
-  transition:border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease!important;
+@media (max-width:380px){
+  .screen{padding-left:14px!important;padding-right:14px!important}
+  #home .home-device-card{height:132px!important;min-height:132px!important;padding:11px!important}
+  #home .home-device-card>strong{font-size:24px!important}
+  #control .mcp-service{min-height:106px!important}
+  #ai .avatar-lab-body{grid-template-columns:96px minmax(0,1fr)!important}
+  #ai .avatar-preview{height:134px!important}
 }
-#control .mcp-service:hover,
-#control .mcp-service.is-active{
-  border-color:rgba(105,229,193,.42)!important;
-  background:linear-gradient(145deg,rgba(105,229,193,.10),rgba(255,255,255,.048))!important;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 8px 18px rgba(0,0,0,.08)!important;
-}
-#control .mcp-service:active{transform:scale(.985)!important}
-#control .mcp-service:focus-visible{
-  outline:2px solid rgba(105,229,193,.72)!important;
-  outline-offset:2px!important;
-}
-#control .service-alarm-panel:not(.is-open),
-#control .mcp-config-panel:not(.is-open){
-  display:none!important;
-}
-#control .service-alarm-panel.is-open{
-  display:grid!important;
-}
-#control .mcp-config-panel.is-open{
-  display:block!important;
-  animation:mcpPanelIn .16s ease-out both;
-}
-#control .mcp-config-panel.is-open .mcp-config-grid{
-  grid-template-columns:1fr!important;
-}
-#control .mcp-config-field{
-  display:none!important;
-}
-#control .mcp-config-field.is-active{
-  display:grid!important;
-}
-#control .mcp-service em.good{
-  border-color:rgba(105,229,193,.32)!important;
-  background:rgba(105,229,193,.11)!important;
-}
-@keyframes mcpPanelIn{
-  from{opacity:0;transform:translateY(-4px)}
-  to{opacity:1;transform:translateY(0)}
+
+@media (max-height:760px){
+  .topbar{padding-top:10px!important;padding-bottom:8px!important}
+  #home{gap:8px!important}
+  #home .scene{min-height:112px!important}
+  #home .scene-head{padding:13px!important}
+  #home .scene-title h1{font-size:19px!important;max-width:220px!important}
+  #home .mode-chip{height:36px!important}
+  #home .live-badge{height:30px!important;bottom:10px!important}
+  #home .insight{padding:9px 10px!important}
+  #home .insight span{-webkit-line-clamp:1}
+  #home .control{padding:10px!important}
+  #home .dial{width:74px!important;height:74px!important}
+  #home .control-main{grid-template-columns:74px 1fr!important;gap:10px!important}
+  #home .dial-value strong{font-size:22px!important}
+  #home .control-copy h2{font-size:14px!important}
+  #home .range-row{margin-top:8px!important}
+  #home .quick button{min-height:44px!important;font-size:10px!important}
+  #home .quick button i{width:16px!important;height:16px!important}
+  #home .home-device-grid{gap:8px!important}
+  #home .home-device-card{height:92px!important;min-height:92px!important;padding:8px 6px!important}
+  #home .home-device-card .product-device-meta{display:none!important}
+  #home .home-device-card>strong{font-size:20px!important;margin:0!important}
+  #home .home-device-card .mini-title span{font-size:10px!important}
+  #home .home-device-card .mini-title i{display:none!important}
+  #home .segmented.compact{gap:4px!important}
+  #home .segmented.compact button{min-height:26px!important;font-size:10px!important;padding:0!important}
+  #home .led-panel .led-slider{margin:3px 0 0!important}
+  #home .led-panel .led-row{display:none!important}
+  .tabbar{height:64px!important;bottom:10px!important}
 }
 
 </style>
@@ -2569,7 +2905,6 @@ body{
           <div class="control-copy">
             <div class="label">枕头校准</div>
             <h2>当前气压与保存点</h2>
-            <small class="calibration-hint">鼾声干预时的自动充气参考</small>
             <p data-control-detail>一键保存会把当前真实气压写入云端设置和长期记忆。</p>
           </div>
         </div>
@@ -2663,7 +2998,32 @@ body{
         <button class="send-btn" id="aiSend" aria-label="发送"><i data-lucide="send-horizontal"></i></button>
       </div>
 
-      </section>
+      <div class="section avatar-lab">
+        <div class="panel-title">
+          <h2>AI 形象工坊</h2>
+          <span>一键同步 LCD</span>
+        </div>
+        <div class="avatar-lab-body">
+          <div class="avatar-preview" id="avatarPreview">
+            <span>LCD 预览</span>
+            <img id="avatarPreviewImg" alt="AI 形象预览">
+          </div>
+          <div class="avatar-workshop">
+            <textarea id="avatarPrompt" placeholder="描述你想要的小安形象">温柔治愈的智能睡眠助手，蓝紫色科技感，半身像，适合 320×480 竖屏 LCD，人物居中，背景简洁</textarea>
+            <div class="avatar-actions">
+              <button class="primary" id="avatarGenerateBtn">生成形象</button>
+              <button id="avatarSyncBtn">同步 LCD</button>
+            </div>
+            <div class="avatar-status" id="avatarStatus">生成后会自动转成枕头屏幕可显示的格式。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section feed">
+        <div class="feed-item"><div><strong>AI 自动解释传感器</strong><span>把枕头压力、呼吸、温湿度、空气和光照转成自然语言建议。</span></div><div class="tag">AI</div></div>
+        <div class="feed-item"><div><strong>远程执行硬件动作</strong><span>模型输出需经过限压、限时和急停校验后才执行。</span></div><div class="tag good">安全</div></div>
+      </div>
+    </section>
     <section class="page" id="control">
       <div class="section manual-stack">
         <div class="panel-title product-control-title"><h2>MCP 服务</h2><span>用户授权配置</span></div>
@@ -2671,7 +3031,7 @@ body{
           <div class="mcp-badge">MCP</div>
           <div>
             <strong>睡眠场景的 AI 服务层</strong>
-            <span>闹钟、音乐、邮件、滴滴打车和 PC Agent 通过用户授权接入，再由小安统一编排任务。</span>
+            <span>搜索、音乐、邮件、滴滴打车和 PC Agent 通过用户授权接入，再由小安统一编排任务。</span>
           </div>
         </div>
 
@@ -2679,8 +3039,9 @@ body{
           <div class="control-panel pc-agent-task-card">
             <div class="mini-title"><i data-lucide="monitor"></i><span>PC Agent</span><b class="mcp-device-badge">MCP</b></div>
             <strong>任务对话</strong>
+            <div class="product-device-meta">像聊天一样下发电脑端任务，服务账号由用户自己授权。</div>
             <div class="pc-chat" id="pcChat">
-              <div class="bubble">像聊天一样调用 PC Agent 下发电脑端任务，让您在床上实现办公。</div>
+              <div class="bubble">可以搜索资料、播放音乐、整理邮件或生成滴滴打车链接；下方可填用户自己的 Cookie / Token / 授权方式。</div>
             </div>
             <div class="command pc-command">
               <input id="pcInput" placeholder="输入任务：播放助眠音乐，或整理今天邮件">
@@ -2692,51 +3053,20 @@ body{
         <div class="product-mcp-layer">
           <div class="mini-title"><span>MCP 服务接入</span><b>用户授权配置</b></div>
           <div class="mcp-service-grid">
-            <div class="mcp-service" data-mcp-service="alarm" role="button" tabindex="0" aria-controls="serviceAlarmPanel"><i data-lucide="alarm-clock"></i><strong>闹钟</strong><span>云端定时 / 唤醒联动</span><em data-mcp-config-state="alarm">点击设置</em></div>
-            <div class="mcp-service" data-mcp-service="music" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="music-2"></i><strong>音乐</strong><span>网易云 / Cookie</span><em data-mcp-config-state="music">填入 Cookie</em></div>
-            <div class="mcp-service" data-mcp-service="mail" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="mail-check"></i><strong>邮件</strong><span>IMAP / 应用密码</span><em data-mcp-config-state="mail">填入邮箱</em></div>
-            <div class="mcp-service" data-mcp-service="didi" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="car"></i><strong>滴滴打车</strong><span>DiDi MCP / 打车链接 API</span><em data-mcp-config-state="didi">填入 Key</em></div>
+            <div class="mcp-service"><i data-lucide="search"></i><strong>搜索</strong><span>DeepSeek / web_search</span><em data-mcp-config-state="search">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="music-2"></i><strong>音乐</strong><span>网易云 / Cookie</span><em data-mcp-config-state="music">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="mail-check"></i><strong>邮件</strong><span>IMAP / 应用密码</span><em data-mcp-config-state="mail">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="car"></i><strong>滴滴打车</strong><span>DiDi MCP / 打车链接 API</span><em data-mcp-config-state="didi">代码已接入</em></div>
           </div>
-<div class="control-panel settings-panel service-alarm-panel" id="serviceAlarmPanel">
-          <div class="manual-head">
-            <div><strong>智能闹钟</strong><span>到点先播放音乐，30 秒未离枕后枕头按气压循环升降</span></div>
-            <b data-alarm-state>未触发</b>
-          </div>
-          <div class="setting-row">
-            <div><strong>启用闹钟</strong><span>云端定时触发，手机关闭也可执行</span></div>
-            <label class="switch"><input id="alarmEnabled" type="checkbox"><b></b></label>
-          </div>
-          <div class="setting-grid">
-            <div class="setting-field">
-              <label for="alarmTime">时间</label>
-              <input id="alarmTime" type="time">
-            </div>
-            <div class="setting-field">
-              <label for="alarmRepeat">重复</label>
-              <select id="alarmRepeat">
-                <option value="daily">每天</option>
-                <option value="workday">工作日</option>
-                <option value="weekend">周末</option>
-                <option value="once">仅一次</option>
-              </select>
-            </div>
-          </div>
-          <div class="setting-field">
-            <label for="alarmSong">唤醒歌曲</label>
-            <input id="alarmSong" type="text" placeholder="例如：小半、起风了、孤勇者">
-          </div>
-        
-          <button class="settings-save service-alarm-save" id="alarmSaveBtn">保存闹钟</button>
-        </div>
-        
-          <div class="mcp-config-panel" id="mcpConfigPanel" data-mcp-config-panel>
-            <div class="mini-title"><span data-mcp-config-title>服务配置</span><b data-mcp-config-subtitle>请填入您的授权信息；不填则使用默认配置</b></div>
+          <div class="mcp-config-panel">
+            <div class="mini-title"><span>当前代码接入</span><b>可替换为用户授权</b></div>
             <div class="mcp-config-grid">
-              <label class="mcp-config-field" data-mcp-config-section="music"><span>音乐平台</span><input id="mcpMusicAuth" type="text" autocomplete="off" placeholder="请填入您的网易云 Cookie；不填则使用默认配置"></label>
-              <label class="mcp-config-field" data-mcp-config-section="mail"><span>邮箱服务</span><input id="mcpMailAuth" type="text" autocomplete="off" placeholder="请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置"></label>
-              <label class="mcp-config-field" data-mcp-config-section="didi"><span>滴滴 MCP</span><input id="mcpDidiAuth" type="text" autocomplete="off" placeholder="请填入您的 DiDi MCP Key；不填则使用默认配置"></label>
+              <label class="mcp-config-field"><span>搜索服务</span><input id="mcpSearchAuth" type="text" autocomplete="off" value="已接入：DeepSeek 原生搜索 / web_search"></label>
+              <label class="mcp-config-field"><span>音乐平台</span><input id="mcpMusicAuth" type="text" autocomplete="off" value="已接入：NETEASE_COOKIE（云端 .env）"></label>
+              <label class="mcp-config-field"><span>邮箱服务</span><input id="mcpMailAuth" type="text" autocomplete="off" value="已接入：imap.163.com / EMAIL_USER / EMAIL_PASS"></label>
+              <label class="mcp-config-field"><span>滴滴 MCP</span><input id="mcpDidiAuth" type="text" autocomplete="off" value="已接入：DIDI_MCP_KEY / taxi_generate_ride_app_link"></label>
             </div>
-            <button class="mcp-config-save" id="mcpConfigSave">保存用户配置</button>
+            <button class="mcp-config-save" id="mcpConfigSave">保存或更新用户授权</button>
           </div>
         </div>
       </div>
@@ -2773,34 +3103,12 @@ body{
           <span data-settings-sync>等待同步</span>
         </div>
 
-<div class="control-panel settings-panel avatar-lab settings-avatar-lab">
-        <div class="panel-title">
-          <h2>AI 形象工坊</h2>
-          <span>一键同步 LCD</span>
-        </div>
-        <div class="avatar-lab-body">
-          <div class="avatar-preview" id="avatarPreview">
-            <span>LCD 预览</span>
-            <img id="avatarPreviewImg" alt="AI 形象预览">
-          </div>
-          <div class="avatar-workshop">
-            <textarea id="avatarPrompt" placeholder="描述你想要的小安形象">温柔治愈的智能睡眠助手，蓝紫色科技感，半身像，适合 320×480 竖屏 LCD，人物居中，背景简洁</textarea>
-            <div class="avatar-actions">
-              <button class="primary" id="avatarGenerateBtn">生成形象</button>
-              <button id="avatarSyncBtn">同步 LCD</button>
-            </div>
-            <div class="avatar-status" id="avatarStatus">生成后会自动转成枕头屏幕可显示的格式。</div>
-          </div>
-        </div>
-      </div>
-
-      
-        <div class="control-panel settings-panel personality-panel">
+        <div class="control-panel settings-panel">
           <div class="manual-head">
-            <div><strong>永久性格</strong><span>影响 AI 表达，不影响安全规则</span></div>
+            <div><strong>永久性格</strong><span>影响 AI 的表达方式，不影响安全规则</span></div>
             <b data-quiet-state>未判断</b>
           </div>
-          <div class="setting-grid personality-grid">
+          <div class="setting-grid">
             <div class="setting-field">
               <label for="settingTone">性格模式</label>
               <select id="settingTone">
@@ -2811,17 +3119,25 @@ body{
               </select>
             </div>
             <div class="setting-field">
-              <label for="settingInitiative">主动性</label>
-              <select id="settingInitiative">
-                <option value="low">低主动，少打扰</option>
-                <option value="normal">正常提醒</option>
-                <option value="high">积极建议</option>
+              <label for="settingStyle">回复</label>
+              <select id="settingStyle">
+                <option value="short">简短</option>
+                <option value="balanced">适中</option>
+                <option value="detailed">详细</option>
               </select>
             </div>
           </div>
           <div class="setting-field">
-            <label for="settingDescription">DIY 性格</label>
-            <textarea id="settingDescription" placeholder="例如：像真实女友一样温柔自然，少说教，低打扰，睡前更安静。"></textarea>
+            <label for="settingInitiative">主动性</label>
+            <select id="settingInitiative">
+              <option value="low">低主动，少打扰</option>
+              <option value="normal">正常提醒</option>
+              <option value="high">积极建议</option>
+            </select>
+          </div>
+          <div class="setting-field">
+            <label for="settingDescription">性格描述</label>
+            <textarea id="settingDescription" placeholder="例如：温柔、克制、低打扰，像真实的枕边生活助手。"></textarea>
           </div>
         </div>
 
@@ -2860,6 +3176,54 @@ body{
           </div>
         </div>
 
+        <div class="control-panel settings-panel ai-behavior-panel">
+          <div class="manual-head">
+            <div><strong>AI 行为</strong><span>只保留最常用的两个永久开关</span></div>
+            <b>权限</b>
+          </div>
+          <div class="setting-row">
+            <div><strong>禁止 AI 出声</strong><span>睡眠时只显示文字，不主动语音播报</span></div>
+            <label class="switch"><input id="blockVoice" type="checkbox"><b></b></label>
+          </div>
+          <div class="setting-row">
+            <div><strong>允许 AI 自主调节</strong><span>允许小安静默调节灯带、风扇、加湿器等外设</span></div>
+            <label class="switch"><input id="allowEnvironment" type="checkbox"><b></b></label>
+          </div>
+          <input id="blockLight" type="checkbox" hidden>
+          <input id="blockScreen" type="checkbox" hidden>
+          <input id="blockPcAgent" type="checkbox" hidden>
+          <input id="allowPillow" type="checkbox" hidden>
+        </div>
+
+        <div class="control-panel settings-panel">
+          <div class="manual-head">
+            <div><strong>智能闹钟</strong><span>到点先播放音乐，30 秒未离枕后枕头按气压循环升降</span></div>
+            <b data-alarm-state>未触发</b>
+          </div>
+          <div class="setting-row">
+            <div><strong>启用闹钟</strong><span>云端定时触发，手机关闭也可执行</span></div>
+            <label class="switch"><input id="alarmEnabled" type="checkbox"><b></b></label>
+          </div>
+          <div class="setting-grid">
+            <div class="setting-field">
+              <label for="alarmTime">时间</label>
+              <input id="alarmTime" type="time">
+            </div>
+            <div class="setting-field">
+              <label for="alarmRepeat">重复</label>
+              <select id="alarmRepeat">
+                <option value="daily">每天</option>
+                <option value="workday">工作日</option>
+                <option value="weekend">周末</option>
+                <option value="once">仅一次</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-field">
+            <label for="alarmSong">唤醒歌曲</label>
+            <input id="alarmSong" type="text" placeholder="例如：小半、起风了、孤勇者">
+          </div>
+        </div>
         <textarea id="memoryText" hidden></textarea>
         <button class="settings-save settings-save-compact" id="settingsSave">保存到云端</button>
       </div>
@@ -3233,12 +3597,12 @@ function collectSettings(){
       }
     ],
     quiet_rules:{
-      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
-      block_ai_light:false,
-      block_ai_screen:false,
-      block_ai_pc_agent:false,
-      allow_gentle_pillow_adjust:false,
-      allow_sleep_environment_control:true,
+      block_ai_voice:!!document.getElementById('blockVoice')?.checked,
+      block_ai_light:!!document.getElementById('blockLight')?.checked,
+      block_ai_screen:!!document.getElementById('blockScreen')?.checked,
+      block_ai_pc_agent:!!document.getElementById('blockPcAgent')?.checked,
+      allow_gentle_pillow_adjust:!!document.getElementById('allowPillow')?.checked,
+      allow_sleep_environment_control:!!document.getElementById('allowEnvironment')?.checked,
       alert_method:'phone_only'
     },
     alarms:[{
@@ -3725,12 +4089,12 @@ function collectSettings(){
       {name:'nap',label:'午休',enabled:!!document.getElementById('napEnabled')?.checked,start:document.getElementById('napStart')?.value || '13:00',end:document.getElementById('napEnd')?.value || '14:30'}
     ],
     quiet_rules:{
-      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
-      block_ai_light:false,
-      block_ai_screen:false,
-      block_ai_pc_agent:false,
-      allow_gentle_pillow_adjust:false,
-      allow_sleep_environment_control:true,
+      block_ai_voice:!!document.getElementById('blockVoice')?.checked,
+      block_ai_light:!!document.getElementById('blockLight')?.checked,
+      block_ai_screen:!!document.getElementById('blockScreen')?.checked,
+      block_ai_pc_agent:!!document.getElementById('blockPcAgent')?.checked,
+      allow_gentle_pillow_adjust:!!document.getElementById('allowPillow')?.checked,
+      allow_sleep_environment_control:!!document.getElementById('allowEnvironment')?.checked,
       alert_method:'phone_only'
     },
     pillow_calibration:{
@@ -4016,21 +4380,10 @@ try{document.querySelectorAll('[data-open-pc-agent]').forEach(btn=>btn.addEventL
 
 
 const MCP_CODE_DEFAULT_CONFIG={
-  alarm:'默认：云端闹钟 / 音乐 + 枕头联动',
-  music:'默认：NETEASE_COOKIE（云端 .env）',
-  mail:'默认：imap.163.com / EMAIL_USER / EMAIL_PASS',
-  didi:'默认：DIDI_MCP_KEY / taxi_generate_ride_app_link'
-};
-const MCP_SERVICE_BADGE_DEFAULT={
-  alarm:'点击设置',
-  music:'填入 Cookie',
-  mail:'填入邮箱',
-  didi:'填入 Key'
-};
-const MCP_SERVICE_PANEL_COPY={
-  music:{title:'音乐配置',subtitle:'请填入您的网易云 Cookie；不填则使用默认配置'},
-  mail:{title:'邮件配置',subtitle:'请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置'},
-  didi:{title:'滴滴打车配置',subtitle:'请填入您的 DiDi MCP Key；不填则使用默认配置'}
+  search:'已接入：DeepSeek 原生搜索 / web_search',
+  music:'已接入：NETEASE_COOKIE（云端 .env）',
+  mail:'已接入：imap.163.com / EMAIL_USER / EMAIL_PASS',
+  didi:'已接入：DIDI_MCP_KEY / taxi_generate_ride_app_link'
 };
 function readMcpUserConfig(){
   try{return JSON.parse(localStorage.getItem('xiaoan_mcp_user_config') || '{}') || {};}catch(e){return {};}
@@ -4039,51 +4392,24 @@ function writeMcpUserConfig(cfg){
   try{localStorage.setItem('xiaoan_mcp_user_config',JSON.stringify(cfg));}catch(e){}
 }
 function isMcpDefaultValue(key,value){
-  return !value || value===MCP_CODE_DEFAULT_CONFIG[key] || /^已接入：/.test(String(value||''));
+  return !value || value===MCP_CODE_DEFAULT_CONFIG[key];
 }
 function updateMcpConfigUi(cfg){
-  const map={music:'mcpMusicAuth',mail:'mcpMailAuth',didi:'mcpDidiAuth'};
+  const map={search:'mcpSearchAuth',music:'mcpMusicAuth',mail:'mcpMailAuth',didi:'mcpDidiAuth'};
   Object.entries(map).forEach(([key,id])=>{
     const input=document.getElementById(id);
-    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
-    const userValue=isMcpDefaultValue(key,raw) ? '' : raw;
-    if(input && document.activeElement!==input)input.value=userValue;
-  });
-  ['alarm','music','mail','didi'].forEach(key=>{
-    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
-    const userConfigured=!isMcpDefaultValue(key,raw);
+    const value=(cfg && cfg[key]) ? cfg[key] : MCP_CODE_DEFAULT_CONFIG[key];
+    if(input && document.activeElement!==input)input.value=value;
+    const userConfigured=!isMcpDefaultValue(key,value);
     document.querySelectorAll('[data-mcp-config-state="' + key + '"]').forEach(el=>{
-      el.textContent=userConfigured ? '用户已配置' : (MCP_SERVICE_BADGE_DEFAULT[key] || '点击配置');
-      el.classList.toggle('good',userConfigured);
+      el.textContent=userConfigured ? '用户已配置' : '代码已接入';
+      el.classList.toggle('good',true);
     });
   });
 }
-function openMcpServicePanel(service, shouldScroll){
-  const alarmPanel=document.getElementById('serviceAlarmPanel');
-  const configPanel=document.getElementById('mcpConfigPanel');
-  document.querySelectorAll('[data-mcp-service]').forEach(card=>card.classList.toggle('is-active',card.dataset.mcpService===service));
-  if(service==='alarm'){
-    if(configPanel)configPanel.classList.remove('is-open');
-    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.remove('is-active'));
-    if(alarmPanel)alarmPanel.classList.add('is-open');
-    if(shouldScroll && alarmPanel)alarmPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
-    return;
-  }
-  if(alarmPanel)alarmPanel.classList.remove('is-open');
-  if(configPanel){
-    const copy=MCP_SERVICE_PANEL_COPY[service] || {title:'服务配置',subtitle:'请填入您的授权信息；不填则使用默认配置'};
-    const title=configPanel.querySelector('[data-mcp-config-title]');
-    const subtitle=configPanel.querySelector('[data-mcp-config-subtitle]');
-    if(title)title.textContent=copy.title;
-    if(subtitle)subtitle.textContent=copy.subtitle;
-    configPanel.classList.add('is-open');
-    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.toggle('is-active',el.dataset.mcpConfigSection===service));
-    if(shouldScroll)configPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
-  }
-}
 function saveMcpUserConfig(){
   const cfg={
-    alarm:'',
+    search:(document.getElementById('mcpSearchAuth')?.value || '').trim(),
     music:(document.getElementById('mcpMusicAuth')?.value || '').trim(),
     mail:(document.getElementById('mcpMailAuth')?.value || '').trim(),
     didi:(document.getElementById('mcpDidiAuth')?.value || '').trim(),
@@ -4091,8 +4417,8 @@ function saveMcpUserConfig(){
   };
   writeMcpUserConfig(cfg);
   updateMcpConfigUi(cfg);
-  sendAppWs({type:'mcp_user_config',configured:{alarm:true,music:true,mail:true,didi:true},user_configured:{alarm:false,music:!isMcpDefaultValue('music',cfg.music),mail:!isMcpDefaultValue('mail',cfg.mail),didi:!isMcpDefaultValue('didi',cfg.didi)},session_id:APP_SESSION_ID});
-  show('配置已保存；留空项使用默认配置');
+  sendAppWs({type:'mcp_user_config',configured:{search:!!cfg.search,music:!!cfg.music,mail:!!cfg.mail,didi:!!cfg.didi},user_configured:{search:!isMcpDefaultValue('search',cfg.search),music:!isMcpDefaultValue('music',cfg.music),mail:!isMcpDefaultValue('mail',cfg.mail),didi:!isMcpDefaultValue('didi',cfg.didi)},session_id:APP_SESSION_ID});
+  show('MCP 用户授权配置已保存');
 }
 function sendPcAgentTaskFromControl(){
   const input=document.getElementById('pcInput');
@@ -4121,9 +4447,9 @@ function sendPcAgentTaskFromControl(){
     text,
     request_id:requestId,
     session_id:APP_SESSION_ID + '-mcp',
-    configured:{alarm:true,music:true,mail:true,didi:true},
+    configured:{search:true,music:true,mail:true,didi:true},
     user_configured:{
-      alarm:!isMcpDefaultValue('alarm',cfg.alarm),
+      search:!isMcpDefaultValue('search',cfg.search),
       music:!isMcpDefaultValue('music',cfg.music),
       mail:!isMcpDefaultValue('mail',cfg.mail),
       didi:!isMcpDefaultValue('didi',cfg.didi)
@@ -4142,37 +4468,25 @@ function sendPcAgentTaskFromControl(){
 function installMcpUserConfigControls(){
   updateMcpConfigUi(readMcpUserConfig());
   const saveBtn=document.getElementById('mcpConfigSave');
-  if(saveBtn && !saveBtn.dataset.boundMcpConfig){saveBtn.dataset.boundMcpConfig='1';saveBtn.addEventListener('click',saveMcpUserConfig);}
-  document.querySelectorAll('[data-mcp-service]').forEach(card=>{
-    if(card.dataset.boundMcpCard)return;
-    card.dataset.boundMcpCard='1';
-    const open=()=>openMcpServicePanel(card.dataset.mcpService,true);
-    card.addEventListener('click',open);
-    card.addEventListener('keydown',event=>{if(event.key==='Enter' || event.key===' '){event.preventDefault();open();}});
-  });
+  if(saveBtn)saveBtn.addEventListener('click',saveMcpUserConfig);
   const pcSendBtn=document.getElementById('pcSend');
-  if(pcSendBtn && !pcSendBtn.dataset.boundPcTask){pcSendBtn.dataset.boundPcTask='1';pcSendBtn.addEventListener('click',sendPcAgentTaskFromControl);}
+  if(pcSendBtn)pcSendBtn.addEventListener('click',sendPcAgentTaskFromControl);
   const pcTaskInput=document.getElementById('pcInput');
-  if(pcTaskInput && !pcTaskInput.dataset.boundPcTask){pcTaskInput.dataset.boundPcTask='1';pcTaskInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();sendPcAgentTaskFromControl();}});}
+  if(pcTaskInput)pcTaskInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();sendPcAgentTaskFromControl();}});
 }
 
 const settingToneSelect=document.getElementById('settingTone');
 if(settingToneSelect){
-  settingToneSelect.addEventListener('change',event=>applyPersonaPreset(event.target.value,false));
+  settingToneSelect.addEventListener('change',event=>applyPersonaPreset(event.target.value,true));
 }
 const settingsSave=document.getElementById('settingsSave');
 if(settingsSave){
   settingsSave.addEventListener('click',saveSettings);
 }
-const alarmSaveBtn=document.getElementById('alarmSaveBtn');
-if(alarmSaveBtn){
-  alarmSaveBtn.addEventListener('click',saveSettings);
-}
 applySettings(defaultSettings(),null);
 connectAppWs();
 bindAvatarWorkshop();
 installPillowHoldControls();
-installMcpUserConfigControls();
 installIcons();
 </script>
 </body>

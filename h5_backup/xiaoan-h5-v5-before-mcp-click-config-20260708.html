@@ -2460,64 +2460,6 @@ body{
 #control .service-alarm-save{height:36px!important;margin-top:0!important;border-radius:15px!important;font-size:12px!important}
 #control .mcp-config-panel{max-height:150px!important}
 
-
-
-/* user polish 2026-07-08: PC Agent copy + title position */
-#control .pc-agent-task-card>strong{
-  display:block!important;
-  margin-top:12px!important;
-  margin-bottom:6px!important;
-}
-#control .pc-agent-task-card .pc-chat{
-  margin-top:8px!important;
-}
-
-
-/* user fix 2026-07-08: MCP cards open one configuration panel on demand */
-#control .mcp-service{
-  cursor:pointer!important;
-  transition:border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease!important;
-}
-#control .mcp-service:hover,
-#control .mcp-service.is-active{
-  border-color:rgba(105,229,193,.42)!important;
-  background:linear-gradient(145deg,rgba(105,229,193,.10),rgba(255,255,255,.048))!important;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 8px 18px rgba(0,0,0,.08)!important;
-}
-#control .mcp-service:active{transform:scale(.985)!important}
-#control .mcp-service:focus-visible{
-  outline:2px solid rgba(105,229,193,.72)!important;
-  outline-offset:2px!important;
-}
-#control .service-alarm-panel:not(.is-open),
-#control .mcp-config-panel:not(.is-open){
-  display:none!important;
-}
-#control .service-alarm-panel.is-open{
-  display:grid!important;
-}
-#control .mcp-config-panel.is-open{
-  display:block!important;
-  animation:mcpPanelIn .16s ease-out both;
-}
-#control .mcp-config-panel.is-open .mcp-config-grid{
-  grid-template-columns:1fr!important;
-}
-#control .mcp-config-field{
-  display:none!important;
-}
-#control .mcp-config-field.is-active{
-  display:grid!important;
-}
-#control .mcp-service em.good{
-  border-color:rgba(105,229,193,.32)!important;
-  background:rgba(105,229,193,.11)!important;
-}
-@keyframes mcpPanelIn{
-  from{opacity:0;transform:translateY(-4px)}
-  to{opacity:1;transform:translateY(0)}
-}
-
 </style>
 </head>
 <body>
@@ -2679,8 +2621,9 @@ body{
           <div class="control-panel pc-agent-task-card">
             <div class="mini-title"><i data-lucide="monitor"></i><span>PC Agent</span><b class="mcp-device-badge">MCP</b></div>
             <strong>任务对话</strong>
+            <div class="product-device-meta">像聊天一样下发电脑端任务，服务账号由用户自己授权。</div>
             <div class="pc-chat" id="pcChat">
-              <div class="bubble">像聊天一样调用 PC Agent 下发电脑端任务，让您在床上实现办公。</div>
+              <div class="bubble">可以设置闹钟、播放音乐、整理邮件或生成滴滴打车链接；下方可填用户自己的 Cookie / Token / 授权方式。</div>
             </div>
             <div class="command pc-command">
               <input id="pcInput" placeholder="输入任务：播放助眠音乐，或整理今天邮件">
@@ -2692,12 +2635,12 @@ body{
         <div class="product-mcp-layer">
           <div class="mini-title"><span>MCP 服务接入</span><b>用户授权配置</b></div>
           <div class="mcp-service-grid">
-            <div class="mcp-service" data-mcp-service="alarm" role="button" tabindex="0" aria-controls="serviceAlarmPanel"><i data-lucide="alarm-clock"></i><strong>闹钟</strong><span>云端定时 / 唤醒联动</span><em data-mcp-config-state="alarm">点击设置</em></div>
-            <div class="mcp-service" data-mcp-service="music" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="music-2"></i><strong>音乐</strong><span>网易云 / Cookie</span><em data-mcp-config-state="music">填入 Cookie</em></div>
-            <div class="mcp-service" data-mcp-service="mail" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="mail-check"></i><strong>邮件</strong><span>IMAP / 应用密码</span><em data-mcp-config-state="mail">填入邮箱</em></div>
-            <div class="mcp-service" data-mcp-service="didi" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="car"></i><strong>滴滴打车</strong><span>DiDi MCP / 打车链接 API</span><em data-mcp-config-state="didi">填入 Key</em></div>
+            <div class="mcp-service"><i data-lucide="alarm-clock"></i><strong>闹钟</strong><span>云端定时 / 唤醒联动</span><em data-mcp-config-state="alarm">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="music-2"></i><strong>音乐</strong><span>网易云 / Cookie</span><em data-mcp-config-state="music">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="mail-check"></i><strong>邮件</strong><span>IMAP / 应用密码</span><em data-mcp-config-state="mail">代码已接入</em></div>
+            <div class="mcp-service"><i data-lucide="car"></i><strong>滴滴打车</strong><span>DiDi MCP / 打车链接 API</span><em data-mcp-config-state="didi">代码已接入</em></div>
           </div>
-<div class="control-panel settings-panel service-alarm-panel" id="serviceAlarmPanel">
+<div class="control-panel settings-panel service-alarm-panel">
           <div class="manual-head">
             <div><strong>智能闹钟</strong><span>到点先播放音乐，30 秒未离枕后枕头按气压循环升降</span></div>
             <b data-alarm-state>未触发</b>
@@ -2729,14 +2672,15 @@ body{
           <button class="settings-save service-alarm-save" id="alarmSaveBtn">保存闹钟</button>
         </div>
         
-          <div class="mcp-config-panel" id="mcpConfigPanel" data-mcp-config-panel>
-            <div class="mini-title"><span data-mcp-config-title>服务配置</span><b data-mcp-config-subtitle>请填入您的授权信息；不填则使用默认配置</b></div>
+          <div class="mcp-config-panel">
+            <div class="mini-title"><span>当前代码接入</span><b>可替换为用户授权</b></div>
             <div class="mcp-config-grid">
-              <label class="mcp-config-field" data-mcp-config-section="music"><span>音乐平台</span><input id="mcpMusicAuth" type="text" autocomplete="off" placeholder="请填入您的网易云 Cookie；不填则使用默认配置"></label>
-              <label class="mcp-config-field" data-mcp-config-section="mail"><span>邮箱服务</span><input id="mcpMailAuth" type="text" autocomplete="off" placeholder="请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置"></label>
-              <label class="mcp-config-field" data-mcp-config-section="didi"><span>滴滴 MCP</span><input id="mcpDidiAuth" type="text" autocomplete="off" placeholder="请填入您的 DiDi MCP Key；不填则使用默认配置"></label>
+              <label class="mcp-config-field"><span>闹钟服务</span><input id="mcpAlarmAuth" type="text" autocomplete="off" value="已接入：云端闹钟 / 音乐 + 枕头联动"></label>
+              <label class="mcp-config-field"><span>音乐平台</span><input id="mcpMusicAuth" type="text" autocomplete="off" value="已接入：NETEASE_COOKIE（云端 .env）"></label>
+              <label class="mcp-config-field"><span>邮箱服务</span><input id="mcpMailAuth" type="text" autocomplete="off" value="已接入：imap.163.com / EMAIL_USER / EMAIL_PASS"></label>
+              <label class="mcp-config-field"><span>滴滴 MCP</span><input id="mcpDidiAuth" type="text" autocomplete="off" value="已接入：DIDI_MCP_KEY / taxi_generate_ride_app_link"></label>
             </div>
-            <button class="mcp-config-save" id="mcpConfigSave">保存用户配置</button>
+            <button class="mcp-config-save" id="mcpConfigSave">保存或更新用户授权</button>
           </div>
         </div>
       </div>
@@ -4016,21 +3960,10 @@ try{document.querySelectorAll('[data-open-pc-agent]').forEach(btn=>btn.addEventL
 
 
 const MCP_CODE_DEFAULT_CONFIG={
-  alarm:'默认：云端闹钟 / 音乐 + 枕头联动',
-  music:'默认：NETEASE_COOKIE（云端 .env）',
-  mail:'默认：imap.163.com / EMAIL_USER / EMAIL_PASS',
-  didi:'默认：DIDI_MCP_KEY / taxi_generate_ride_app_link'
-};
-const MCP_SERVICE_BADGE_DEFAULT={
-  alarm:'点击设置',
-  music:'填入 Cookie',
-  mail:'填入邮箱',
-  didi:'填入 Key'
-};
-const MCP_SERVICE_PANEL_COPY={
-  music:{title:'音乐配置',subtitle:'请填入您的网易云 Cookie；不填则使用默认配置'},
-  mail:{title:'邮件配置',subtitle:'请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置'},
-  didi:{title:'滴滴打车配置',subtitle:'请填入您的 DiDi MCP Key；不填则使用默认配置'}
+  alarm:'已接入：云端闹钟 / 音乐 + 枕头联动',
+  music:'已接入：NETEASE_COOKIE（云端 .env）',
+  mail:'已接入：imap.163.com / EMAIL_USER / EMAIL_PASS',
+  didi:'已接入：DIDI_MCP_KEY / taxi_generate_ride_app_link'
 };
 function readMcpUserConfig(){
   try{return JSON.parse(localStorage.getItem('xiaoan_mcp_user_config') || '{}') || {};}catch(e){return {};}
@@ -4039,51 +3972,24 @@ function writeMcpUserConfig(cfg){
   try{localStorage.setItem('xiaoan_mcp_user_config',JSON.stringify(cfg));}catch(e){}
 }
 function isMcpDefaultValue(key,value){
-  return !value || value===MCP_CODE_DEFAULT_CONFIG[key] || /^已接入：/.test(String(value||''));
+  return !value || value===MCP_CODE_DEFAULT_CONFIG[key];
 }
 function updateMcpConfigUi(cfg){
-  const map={music:'mcpMusicAuth',mail:'mcpMailAuth',didi:'mcpDidiAuth'};
+  const map={alarm:'mcpAlarmAuth',music:'mcpMusicAuth',mail:'mcpMailAuth',didi:'mcpDidiAuth'};
   Object.entries(map).forEach(([key,id])=>{
     const input=document.getElementById(id);
-    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
-    const userValue=isMcpDefaultValue(key,raw) ? '' : raw;
-    if(input && document.activeElement!==input)input.value=userValue;
-  });
-  ['alarm','music','mail','didi'].forEach(key=>{
-    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
-    const userConfigured=!isMcpDefaultValue(key,raw);
+    const value=(cfg && cfg[key]) ? cfg[key] : MCP_CODE_DEFAULT_CONFIG[key];
+    if(input && document.activeElement!==input)input.value=value;
+    const userConfigured=!isMcpDefaultValue(key,value);
     document.querySelectorAll('[data-mcp-config-state="' + key + '"]').forEach(el=>{
-      el.textContent=userConfigured ? '用户已配置' : (MCP_SERVICE_BADGE_DEFAULT[key] || '点击配置');
-      el.classList.toggle('good',userConfigured);
+      el.textContent=userConfigured ? '用户已配置' : '代码已接入';
+      el.classList.toggle('good',true);
     });
   });
 }
-function openMcpServicePanel(service, shouldScroll){
-  const alarmPanel=document.getElementById('serviceAlarmPanel');
-  const configPanel=document.getElementById('mcpConfigPanel');
-  document.querySelectorAll('[data-mcp-service]').forEach(card=>card.classList.toggle('is-active',card.dataset.mcpService===service));
-  if(service==='alarm'){
-    if(configPanel)configPanel.classList.remove('is-open');
-    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.remove('is-active'));
-    if(alarmPanel)alarmPanel.classList.add('is-open');
-    if(shouldScroll && alarmPanel)alarmPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
-    return;
-  }
-  if(alarmPanel)alarmPanel.classList.remove('is-open');
-  if(configPanel){
-    const copy=MCP_SERVICE_PANEL_COPY[service] || {title:'服务配置',subtitle:'请填入您的授权信息；不填则使用默认配置'};
-    const title=configPanel.querySelector('[data-mcp-config-title]');
-    const subtitle=configPanel.querySelector('[data-mcp-config-subtitle]');
-    if(title)title.textContent=copy.title;
-    if(subtitle)subtitle.textContent=copy.subtitle;
-    configPanel.classList.add('is-open');
-    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.toggle('is-active',el.dataset.mcpConfigSection===service));
-    if(shouldScroll)configPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
-  }
-}
 function saveMcpUserConfig(){
   const cfg={
-    alarm:'',
+    alarm:(document.getElementById('mcpAlarmAuth')?.value || '').trim(),
     music:(document.getElementById('mcpMusicAuth')?.value || '').trim(),
     mail:(document.getElementById('mcpMailAuth')?.value || '').trim(),
     didi:(document.getElementById('mcpDidiAuth')?.value || '').trim(),
@@ -4091,8 +3997,8 @@ function saveMcpUserConfig(){
   };
   writeMcpUserConfig(cfg);
   updateMcpConfigUi(cfg);
-  sendAppWs({type:'mcp_user_config',configured:{alarm:true,music:true,mail:true,didi:true},user_configured:{alarm:false,music:!isMcpDefaultValue('music',cfg.music),mail:!isMcpDefaultValue('mail',cfg.mail),didi:!isMcpDefaultValue('didi',cfg.didi)},session_id:APP_SESSION_ID});
-  show('配置已保存；留空项使用默认配置');
+  sendAppWs({type:'mcp_user_config',configured:{alarm:!!cfg.alarm,music:!!cfg.music,mail:!!cfg.mail,didi:!!cfg.didi},user_configured:{alarm:!isMcpDefaultValue('alarm',cfg.alarm),music:!isMcpDefaultValue('music',cfg.music),mail:!isMcpDefaultValue('mail',cfg.mail),didi:!isMcpDefaultValue('didi',cfg.didi)},session_id:APP_SESSION_ID});
+  show('MCP 用户授权配置已保存');
 }
 function sendPcAgentTaskFromControl(){
   const input=document.getElementById('pcInput');
@@ -4142,18 +4048,11 @@ function sendPcAgentTaskFromControl(){
 function installMcpUserConfigControls(){
   updateMcpConfigUi(readMcpUserConfig());
   const saveBtn=document.getElementById('mcpConfigSave');
-  if(saveBtn && !saveBtn.dataset.boundMcpConfig){saveBtn.dataset.boundMcpConfig='1';saveBtn.addEventListener('click',saveMcpUserConfig);}
-  document.querySelectorAll('[data-mcp-service]').forEach(card=>{
-    if(card.dataset.boundMcpCard)return;
-    card.dataset.boundMcpCard='1';
-    const open=()=>openMcpServicePanel(card.dataset.mcpService,true);
-    card.addEventListener('click',open);
-    card.addEventListener('keydown',event=>{if(event.key==='Enter' || event.key===' '){event.preventDefault();open();}});
-  });
+  if(saveBtn)saveBtn.addEventListener('click',saveMcpUserConfig);
   const pcSendBtn=document.getElementById('pcSend');
-  if(pcSendBtn && !pcSendBtn.dataset.boundPcTask){pcSendBtn.dataset.boundPcTask='1';pcSendBtn.addEventListener('click',sendPcAgentTaskFromControl);}
+  if(pcSendBtn)pcSendBtn.addEventListener('click',sendPcAgentTaskFromControl);
   const pcTaskInput=document.getElementById('pcInput');
-  if(pcTaskInput && !pcTaskInput.dataset.boundPcTask){pcTaskInput.dataset.boundPcTask='1';pcTaskInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();sendPcAgentTaskFromControl();}});}
+  if(pcTaskInput)pcTaskInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();sendPcAgentTaskFromControl();}});
 }
 
 const settingToneSelect=document.getElementById('settingTone');
@@ -4172,7 +4071,6 @@ applySettings(defaultSettings(),null);
 connectAppWs();
 bindAvatarWorkshop();
 installPillowHoldControls();
-installMcpUserConfigControls();
 installIcons();
 </script>
 </body>

@@ -863,10 +863,6 @@ def _get_automation_state(client_id: str) -> dict:
             "last_sleep_greeting_day": "",
             "sleep_greeting_in_progress_day": "",
             "sleep_greeting_in_progress_until": 0.0,
-            "last_on_pillow": None,
-            "sleep_period_key": "",
-            "sleep_period_started_on_pillow": False,
-            "sleep_greeting_late_allowed_key": "",
             "fan_alarm_active": False,
             "humidifier_alarm_active": False,
             "worker_task": None,
@@ -894,49 +890,6 @@ def _is_user_on_pillow(sensor_payload: dict) -> bool:
             if _safe_float(item.get("n")) >= PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N:
                 return True
     return False
-
-
-def _current_sleep_quiet_key(quiet_status: dict) -> str:
-    """Return a stable key for the active night-sleep period, otherwise empty."""
-    if not quiet_status or not quiet_status.get("active"):
-        return ""
-    period = quiet_status.get("period") or {}
-    if str(period.get("name") or "") != "night_sleep":
-        return ""
-    day_key = str(quiet_status.get("now") or "")[:10]
-    return f"night_sleep:{day_key}:{period.get('start')}:{period.get('end')}"
-
-
-def _update_sleep_arrival_state(client_id: str, sensor_payload: dict, settings: dict) -> None:
-    """Track whether the user was already on the pillow when night sleep started.
-
-    Night sleep is silent by default. If the user was not on the pillow at the
-    sleep start window and later lies down, one gentle proactive reminder is allowed.
-    """
-    state = _get_automation_state(client_id)
-    on_pillow = _is_user_on_pillow(sensor_payload)
-    quiet_status = get_quiet_status(settings)
-    sleep_key = _current_sleep_quiet_key(quiet_status)
-    prev_on_pillow = state.get("last_on_pillow")
-
-    if sleep_key:
-        if state.get("sleep_period_key") != sleep_key:
-            state["sleep_period_key"] = sleep_key
-            state["sleep_period_started_on_pillow"] = bool(on_pillow)
-            if on_pillow and prev_on_pillow is False:
-                state["sleep_greeting_late_allowed_key"] = sleep_key
-            elif not on_pillow:
-                state["sleep_greeting_late_allowed_key"] = sleep_key
-            else:
-                state["sleep_greeting_late_allowed_key"] = ""
-        elif prev_on_pillow is False and on_pillow and not state.get("sleep_period_started_on_pillow"):
-            state["sleep_greeting_late_allowed_key"] = sleep_key
-    else:
-        state["sleep_period_key"] = ""
-        state["sleep_period_started_on_pillow"] = False
-        state["sleep_greeting_late_allowed_key"] = ""
-
-    state["last_on_pillow"] = bool(on_pillow)
 
 
 def _alarm_now() -> datetime:
@@ -1781,10 +1734,9 @@ async def evaluate_sensor_automations(client_id: str, sensor_payload: dict) -> N
     if not client_id or not isinstance(sensor_payload, dict):
         return
     settings = load_user_settings()
-    _update_sleep_arrival_state(client_id, sensor_payload, settings)
+    _get_automation_state(client_id)
     await _maybe_prompt_pre_sleep_light(client_id, sensor_payload, settings)
-    if settings.get("quiet_rules", {}).get("allow_sleep_environment_control", True):
-        await _maybe_auto_control_environment(client_id, sensor_payload, settings)
+    await _maybe_auto_control_environment(client_id, sensor_payload, settings)
 
 
 def schedule_sensor_automations(client_id: str, sensor_payload: dict) -> None:
@@ -1805,13 +1757,6 @@ async def handle_sleep_greeting_trigger(
     state = _get_automation_state(client_id)
     quiet_status = get_quiet_status(settings)
     day_key = str(quiet_status.get("now") or "")[:10]
-    sleep_key = _current_sleep_quiet_key(quiet_status)
-    voice_blocked = is_ai_voice_blocked(settings)
-
-    if voice_blocked and sleep_key and state.get("sleep_greeting_late_allowed_key") != sleep_key:
-        await send_json_to_esp32(client_id, {"type": "status"})
-        print(f"[SleepGreeting] night sleep is silent; skip proactive voice key={sleep_key}")
-        return
 
     if day_key and state.get("last_sleep_greeting_day") == day_key:
         await send_json_to_esp32(client_id, {"type": "status"})
@@ -1845,7 +1790,6 @@ async def handle_sleep_greeting_trigger(
         print(f"[就寝] 主动问候 TTS ok={ok}")
         if ok:
             state["last_sleep_greeting_day"] = day_key
-            state["sleep_greeting_late_allowed_key"] = ""
             history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
             history.append({"role": "assistant", "content": reply})
             await request_one_shot_listen(client_id, "sleep_greeting_reply")
