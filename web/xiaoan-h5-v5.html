@@ -2755,6 +2755,7 @@ body{
           <div class="metric"><div class="name">光照</div><div class="num" data-live-light>--</div><div class="sub">lux</div></div>
         </div>
         <div class="feed status-feed-lite">
+          <div class="feed-item" data-status-row="snore"><div><strong>鼾声干预</strong><span>等待本地鼾声检测事件。</span></div><div class="tag">待命</div></div>
           <div class="feed-item" data-status-row="radar"><div><strong>生命体征</strong><span>等待雷达心率 / 呼吸数据。</span></div><div class="tag">等待</div></div>
           <div class="feed-item" data-status-row="devices"><div><strong>设备状态</strong><span>等待灯带、风扇、加湿器状态。</span></div><div class="tag">等待</div></div>
         </div>
@@ -2897,6 +2898,7 @@ let ledSendTimer=null;
 const irDeviceState={fan:false,humidifier:false,air_conditioner:false};
 let userSettings=null;
 let latestSensorData={};
+let latestSnoreEvent=null;
 let latestSensorAt=0;
 let latestMeasuredPressure=null;
 
@@ -3468,9 +3470,17 @@ function connectAppWs(){
     let msg;
     try{msg=JSON.parse(event.data)}catch{return}
     if(msg.type==='sensor_data' || msg.type==='app_hello'){
+      if(msg.latest_snore_event && typeof msg.latest_snore_event==='object')latestSnoreEvent=msg.latest_snore_event;
       updateTelemetry(msg);
       if(msg.settings)applySettings(msg.settings,msg.quiet_status);
       if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
+    }else if(msg.type==='snore_event'){
+      latestSnoreEvent=(msg.data && typeof msg.data==='object') ? msg.data : null;
+      if(latestSnoreEvent){
+        latestSensorData=Object.assign({},latestSensorData || {},{last_snore_event:latestSnoreEvent});
+        updateStatusRows(latestSensorData || {});
+        show(latestSnoreEvent.adjusted===false ? '检测到鼾声，但枕头调整未执行' : '检测到鼾声，已自动调整枕头');
+      }
     }else if(msg.type==='app_chat_start' || msg.type==='app_chat_delta' || msg.type==='app_chat_done' || msg.type==='app_chat_error'){
       updateAppChat(msg);
     }else if(msg.type==='didi_ride_link'){
@@ -3570,6 +3580,21 @@ function radarSummary(data){
 function pressureSummary(data){
   if(data.pressure_valid===false)return null;
   return pickNumber(data,['pressure_kpa','pillow_pressure_kpa','current_kpa','air_kpa']);
+}
+function snoreSummary(data){
+  const evt=(data && data.last_snore_event && typeof data.last_snore_event==='object')
+    ? data.last_snore_event
+    : (latestSnoreEvent && typeof latestSnoreEvent==='object' ? latestSnoreEvent : null);
+  if(!evt)return null;
+  const score=Number(evt.score);
+  const target=Number(evt.target_kpa);
+  const receivedAt=evt.received_at || evt.time || '';
+  return {
+    score:Number.isFinite(score)?score:null,
+    target_kpa:Number.isFinite(target)?target:null,
+    adjusted:evt.adjusted!==false,
+    received_at:receivedAt
+  };
 }
 function tag(el,text,state){
   if(!el)return;
@@ -3904,7 +3929,17 @@ function buildHomeSummary(data){
   installIcons();
 }
 function updateStatusRows(data){
+  const snore=snoreSummary(data||{});
   const radar=radarSummary(data||{});
+  if(snore){
+    const parts=[];
+    if(snore.score!==null)parts.push('置信度 ' + snore.score.toFixed(2));
+    if(snore.target_kpa!==null)parts.push('目标气压 ' + snore.target_kpa.toFixed(1) + ' kPa');
+    if(snore.received_at)parts.push('时间 ' + fmtTime(snore.received_at));
+    updateRow('snore','鼾声干预',parts.join('；') + '。',snore.adjusted===false?'已检测':'已干预',snore.adjusted===false?'warn':'good');
+  }else{
+    updateRow('snore','鼾声干预','睡眠期间由 ESP32-S3 本地检测，触发后自动充气侧偏。','待命','');
+  }
   if(radar.valid){
     const r=[]; if(radar.hr!==null)r.push('心率 '+radar.hr.toFixed(0)+' bpm'); if(radar.br!==null)r.push('呼吸 '+radar.br.toFixed(0)+' 次/分');
     updateRow('radar','生命体征',r.join('；')+'。','有效','good');
@@ -3920,6 +3955,7 @@ function updateStatusRows(data){
 function updateTelemetry(payload){
   if(Object.prototype.hasOwnProperty.call(payload,'esp32_connected')){esp32Connected=!!payload.esp32_connected;setCloudState(cloudConnected,esp32Connected);}
   const data=flattenSensorData(payload); latestSensorData=data; latestSensorAt=Date.now();
+  if(data.last_snore_event && typeof data.last_snore_event==='object')latestSnoreEvent=data.last_snore_event;
   const p=pressureSummary(data); if(p!==null){latestMeasuredPressure=p; const v=Number(p).toFixed(1); setPressure(v); setText('[data-live-pressure]',v);} else {setText('[data-live-pressure]','--');}
   const env=envSummary(data); setText('[data-live-env]',env.temp!==null?env.temp.toFixed(1)+'°':'--'); setText('[data-live-humidity]',env.hum!==null?env.hum.toFixed(0)+'% RH':'等待数据'); setText('[data-live-air]',env.air!==null?(env.air<10?env.air.toFixed(1):env.air.toFixed(0)):'--'); setText('[data-live-light]',env.light!==null?env.light.toFixed(0):'--');
   if(typeof data.led_enabled==='boolean' || typeof data.led_brightness_pct==='number')setLedUi(typeof data.led_enabled==='boolean'?data.led_enabled:ledEnabled,typeof data.led_brightness_pct==='number'?data.led_brightness_pct:ledBrightnessPct);

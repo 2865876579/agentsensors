@@ -129,6 +129,7 @@ last_active_esp32_id: str | None = None
 app_clients: dict[str, WebSocket] = {}
 app_chat_histories: dict[str, list[dict]] = {}
 latest_sensor_data: dict | None = None
+latest_snore_event: dict | None = None
 sensor_poll_task: asyncio.Task | None = None
 alarm_scheduler_task: asyncio.Task | None = None
 alarm_runtime: dict = {
@@ -153,6 +154,9 @@ AIR_BAD_PPM_THRESHOLD = 2.0
 AIR_BAD_RESET_PPM = 1.5
 DRY_HUMIDITY_THRESHOLD = 54.0
 DRY_HUMIDITY_RESET_PCT = 55.0
+SNORE_TARGET_DELTA_KPA = 0.8
+SNORE_DEFAULT_TARGET_KPA = 4.0
+SNORE_POLICY_COOLDOWN_SEC = 300
 
 automation_states: dict[str, dict] = {}
 
@@ -786,6 +790,7 @@ async def handle_esp32_ai_persona_update(persona: str, client_id: str = "") -> d
         "quiet_status": get_quiet_status(settings),
         "alarm_state": dict(alarm_runtime),
     }
+    await push_snore_policy(client_id, settings=settings)
     await broadcast_to_apps(payload)
     print(
         f"[ESP32] ai_persona={payload['ai_persona']} saved "
@@ -824,6 +829,48 @@ async def handle_esp32_pillow_calibration_save(saved_kpa, client_id: str = "") -
     await broadcast_to_apps(payload)
     print(f"[ESP32] pillow calibration saved {value:.1f} kPa client={client_id}")
     return payload
+
+
+def _build_snore_policy(
+    settings: dict | None = None,
+    sensor_payload: dict | None = None,
+) -> dict:
+    settings = settings or load_user_settings()
+    quiet_status = get_quiet_status(settings)
+    period = quiet_status.get("period") or {}
+    period_name = str(period.get("name") or "")
+    in_sleep_period = bool(
+        quiet_status.get("active") and period_name in {"night_sleep", "nap"}
+    )
+    on_pillow = _is_user_on_pillow(sensor_payload or {})
+    calibration = settings.get("pillow_calibration") or {}
+    enabled = bool(calibration.get("snore_adjust_enabled", True))
+    saved_kpa = _safe_float(calibration.get("saved_kpa"), SNORE_DEFAULT_TARGET_KPA - SNORE_TARGET_DELTA_KPA)
+    target_kpa = max(0.5, min(5.0, saved_kpa + SNORE_TARGET_DELTA_KPA))
+    if not math.isfinite(target_kpa):
+        target_kpa = SNORE_DEFAULT_TARGET_KPA
+    return {
+        "type": "snore_policy",
+        "enabled": enabled,
+        "sleep_active": bool(enabled and in_sleep_period and on_pillow),
+        "target_kpa": round(target_kpa, 2),
+        "cooldown_sec": SNORE_POLICY_COOLDOWN_SEC,
+        "period_name": period_name,
+        "on_pillow": on_pillow,
+    }
+
+
+async def push_snore_policy(
+    client_id: str | None = None,
+    *,
+    sensor_payload: dict | None = None,
+    settings: dict | None = None,
+) -> bool:
+    target = pick_esp32_client(client_id)
+    if not target:
+        return False
+    payload = _build_snore_policy(settings=settings, sensor_payload=sensor_payload)
+    return await send_json_to_esp32(target, payload)
 
 
 async def request_sensor_data(client_id: str | None = None) -> bool:
@@ -2623,7 +2670,7 @@ async def esp32_endpoint(websocket: WebSocket):
     新协议：hello / listen start / binary Opus / listen stop / tts start|stop。
     同时保留 text、audio、audio_start、audio_end 等旧测试入口。
     """
-    global last_active_esp32_id, latest_sensor_data
+    global last_active_esp32_id, latest_sensor_data, latest_snore_event
 
     await websocket.accept()
     client_id = str(id(websocket))
@@ -2689,6 +2736,7 @@ async def esp32_endpoint(websocket: WebSocket):
                             "frame_duration": 60,
                         },
                     })
+                    await push_snore_policy(client_id)
                     print(f"[ESP32] hello session_id={session_id}, version={data.get('version')}")
                     continue
 
@@ -2806,6 +2854,8 @@ async def esp32_endpoint(websocket: WebSocket):
                 elif msg_type == "sensor_data":
                     request_id = data.get("request_id", "")
                     sensor_payload = data.get("data", {})
+                    if isinstance(sensor_payload, dict) and latest_snore_event:
+                        sensor_payload.setdefault("last_snore_event", latest_snore_event)
                     latest_sensor_data = {
                         "received_at": time.time(),
                         "client_id": client_id,
@@ -2822,6 +2872,39 @@ async def esp32_endpoint(websocket: WebSocket):
                             future.set_result(json.dumps(sensor_payload, ensure_ascii=False))
                             print(f"[ESP32] sensor_data resolved request_id={request_id}")
                     schedule_sensor_automations(client_id, sensor_payload)
+                    await push_snore_policy(client_id, sensor_payload=sensor_payload)
+
+                elif msg_type == "snore_event":
+                    event_payload = {
+                        "received_at": time.time(),
+                        "client_id": client_id,
+                        "snore": bool(data.get("snore", True)),
+                        "score": _safe_float(data.get("score")),
+                        "non_snore": _safe_float(data.get("non_snore")),
+                        "rms": int(data.get("rms") or 0),
+                        "peak": int(data.get("peak") or 0),
+                        "active_chunks": int(data.get("active_chunks") or 0),
+                        "action": data.get("action") or "inflate",
+                        "adjusted": bool(data.get("adjusted", True)),
+                        "target_kpa": _safe_float(data.get("target_kpa")),
+                        "source": data.get("source") or "local_snore_ai",
+                    }
+                    latest_snore_event = event_payload
+                    if latest_sensor_data is None:
+                        latest_sensor_data = {
+                            "received_at": time.time(),
+                            "client_id": client_id,
+                            "data": {},
+                        }
+                    latest_sensor_data["received_at"] = time.time()
+                    latest_sensor_data["client_id"] = client_id
+                    latest_sensor_data.setdefault("data", {})["last_snore_event"] = event_payload
+                    await broadcast_to_apps({
+                        "type": "snore_event",
+                        "esp32_connected": True,
+                        "data": event_payload,
+                        "latest": latest_sensor_data,
+                    })
 
                 elif msg_type == "ai_persona":
                     persona = data.get("persona") or data.get("mode") or ""
@@ -2947,6 +3030,7 @@ async def api_latest_sensors():
         "esp32_connected": bool(esp32_clients),
         "app_clients": len(app_clients),
         "latest": latest_sensor_data,
+        "latest_snore_event": latest_snore_event,
     }
 
 
@@ -2965,6 +3049,7 @@ async def api_user_settings():
 async def api_update_user_settings(payload: dict):
     settings = save_user_settings(payload.get("settings") if "settings" in payload else payload)
     quiet_status = get_quiet_status(settings)
+    await push_snore_policy(settings=settings)
     await broadcast_to_apps({
         "type": "settings_state",
         "settings": settings,
@@ -3063,6 +3148,7 @@ async def app_endpoint(websocket: WebSocket):
         "type": "app_hello",
         "esp32_connected": bool(esp32_clients),
         "latest": latest_sensor_data,
+        "latest_snore_event": latest_snore_event,
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
         "alarm_state": dict(alarm_runtime),
@@ -3091,6 +3177,7 @@ async def app_endpoint(websocket: WebSocket):
             elif msg_type == "settings_update":
                 settings = save_user_settings(data.get("settings") or {})
                 quiet_status = get_quiet_status(settings)
+                await push_snore_policy(settings=settings)
                 payload = {
                     "type": "settings_state",
                     "ok": True,
