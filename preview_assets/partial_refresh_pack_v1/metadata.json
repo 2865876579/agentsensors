@@ -1,0 +1,115 @@
+{
+  "source_sheet": "C:\\Users\\28658\\Desktop\\image2\\images\\image-edit-头发丝也要动啊-像被风吹起来一样-而且也要有腿-依旧12帧率-20260708-232422-473577.png",
+  "normalized_frame_size": {
+    "w": 384,
+    "h": 341
+  },
+  "base_frame": "frames_clean/frame_01.png",
+  "global_region": {
+    "x": 0,
+    "y": 0,
+    "w": 384,
+    "h": 341
+  },
+  "fixed_region_frames_dir": "fixed_region_frames",
+  "per_frame_patches_dir": "per_frame_patches",
+  "per_frame_patches": [
+    {
+      "frame": 1,
+      "x": null,
+      "y": null,
+      "w": 0,
+      "h": 0,
+      "file": "patch_01.png"
+    },
+    {
+      "frame": 2,
+      "x": 53,
+      "y": 23,
+      "w": 331,
+      "h": 247,
+      "file": "patch_02.png"
+    },
+    {
+      "frame": 3,
+      "x": 286,
+      "y": 0,
+      "w": 98,
+      "h": 229,
+      "file": "patch_03.png"
+    },
+    {
+      "frame": 4,
+      "x": 218,
+      "y": 260,
+      "w": 7,
+      "h": 10,
+      "file": "patch_04.png"
+    },
+    {
+      "frame": 5,
+      "x": 0,
+      "y": 39,
+      "w": 376,
+      "h": 280,
+      "file": "patch_05.png"
+    },
+    {
+      "frame": 6,
+      "x": 2,
+      "y": 45,
+      "w": 371,
+      "h": 265,
+      "file": "patch_06.png"
+    },
+    {
+      "frame": 7,
+      "x": 57,
+      "y": 227,
+      "w": 217,
+      "h": 114,
+      "file": "patch_07.png"
+    },
+    {
+      "frame": 8,
+      "x": 0,
+      "y": 240,
+      "w": 231,
+      "h": 101,
+      "file": "patch_08.png"
+    },
+    {
+      "frame": 9,
+      "x": 325,
+      "y": 36,
+      "w": 46,
+      "h": 87,
+      "file": "patch_09.png"
+    },
+    {
+      "frame": 10,
+      "x": 304,
+      "y": 10,
+      "w": 80,
+      "h": 104,
+      "file": "patch_10.png"
+    },
+    {
+      "frame": 11,
+      "x": 1,
+      "y": 0,
+      "w": 383,
+      "h": 341,
+      "file": "patch_11.png"
+    },
+    {
+      "frame": 12,
+      "x": 228,
+      "y": 282,
+      "w": 13,
+      "h": 11,
+      "file": "patch_12.png"
+    }
+  ],
+  "fps_hint": 12
+}

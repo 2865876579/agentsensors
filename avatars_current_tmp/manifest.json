@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "id": "20260707_212632_二次元动漫风格的全身女友形象-温柔可爱但不幼稚-20岁左右-清爽自然的长",
+  "created_at": "2026-07-07T13:28:51.087029+00:00",
+  "prompt": "二次元动漫风格的全身女友形象，温柔可爱但不幼稚，20岁左右，清爽自然的长发，柔和微笑，穿着舒适的浅色居家睡衣或针织开衫，姿态放松，像睡前陪伴型虚拟女友。竖屏构图，人物全身居中，头部到脚部完整可见，适合 320×480 竖屏 LCD 显示。画面干净，背景简洁柔和，浅蓝紫色夜晚卧室氛围，柔光照明，细节精致，日系动画插画质感，高质量角色立绘，不要文字，不要水印，不要复杂背景，不要机械感，不要赛博风，不要明显 AI 机器人元素。适合 320×480 竖屏 LCD",
+  "width": 320,
+  "height": 480,
+  "format": "rgb666",
+  "bytes_per_pixel": 3,
+  "bin_size": 460800,
+  "crc32": "0aba1adf",
+  "files": {
+    "preview": "/api/avatar/current/preview.png",
+    "rgb666": "/api/avatar/current/avatar_base_rgb666.bin",
+    "manifest": "/api/avatar/current/manifest"
+  },
+  "urls": {
+    "preview": "http://39.106.190.124:8000/api/avatar/current/preview.png",
+    "rgb666": "http://39.106.190.124:8000/api/avatar/current/avatar_base_rgb666.bin",
+    "manifest": "http://39.106.190.124:8000/api/avatar/current/manifest"
+  },
+  "lcd_adjustment": {
+    "brightness": 0.88,
+    "contrast": 1.22,
+    "saturation": 1.18
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "ok": true,
+  "id": "20260709_002629_local_sprite12_wind_hair_fullbody",
+  "created_at": "2026-07-08T16:26:30.839488+00:00",
+  "prompt": "local 12-frame sprite sheet: wind-blown hair, full-body character",
+  "width": 320,
+  "height": 480,
+  "format": "rgb666",
+  "bytes_per_pixel": 3,
+  "bin_size": 460800,
+  "crc32": "d2f0c071",
+  "frame_count": 12,
+  "fps": 12,
+  "head_region": {
+    "x": 0,
+    "y": 24,
+    "w": 280,
+    "h": 230
+  },
+  "head_frame_bin_size": 193200,
+  "head_frame_crc32": [
+    "cefcbdfd",
+    "32bd31b5",
+    "38f3a597",
+    "6355ee0b",
+    "866b3e97",
+    "043043c5",
+    "e00c32e3",
+    "f1d37bf8",
+    "df18d08d",
+    "daaf6217",
+    "1b99c764",
+    "d0773280"
+  ],
+  "files": {
+    "preview": "/api/avatar/current/preview.png",
+    "rgb666": "/api/avatar/current/avatar_base_rgb666.bin",
+    "manifest": "/api/avatar/current/manifest"
+  },
+  "urls": {
+    "preview": "http://39.106.190.124:8000/api/avatar/current/preview.png",
+    "rgb666": "http://39.106.190.124:8000/api/avatar/current/avatar_base_rgb666.bin",
+    "manifest": "http://39.106.190.124:8000/api/avatar/current/manifest"
+  },
+  "lcd_adjustment": {
+    "brightness": 0.88,
+    "contrast": 1.22,
+    "saturation": 1.18
+  }
+}

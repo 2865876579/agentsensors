@@ -1,0 +1,36 @@
+{
+  "source_sheet": "C:\\Users\\28658\\Desktop\\image2\\images\\image-edit-头发丝也要动啊-像被风吹起来一样-而且也要有腿-依旧12帧率-20260708-232422-473577.png",
+  "source_size": {
+    "w": 1536,
+    "h": 1024
+  },
+  "tile_edges": {
+    "x_edges": [
+      0,
+      354,
+      707,
+      1060,
+      1414
+    ],
+    "y_edges": [
+      0,
+      378,
+      756,
+      1134
+    ]
+  },
+  "frame_size": {
+    "w": 354,
+    "h": 378
+  },
+  "refresh_region": {
+    "x": 24,
+    "y": 4,
+    "w": 282,
+    "h": 374
+  },
+  "fps_hint": 12,
+  "note": "?9-12????????????1?????????? region_frames?",
+  "base_full_frame": "full_frames_clean/frame_01.png",
+  "region_frames_dir": "region_frames"
+}

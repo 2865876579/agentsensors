@@ -2518,6 +2518,220 @@ body{
   to{opacity:1;transform:translateY(0)}
 }
 
+
+/* user fix 2026-07-09: compact home/control pressure slider so it stays inside the card */
+#home .control{
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+}
+#home .range-row{
+  width:calc(100% - 12px)!important;
+  max-width:calc(100% - 12px)!important;
+  margin:5px auto 0!important;
+  padding:0 4px!important;
+  box-sizing:border-box!important;
+  grid-template-columns:28px minmax(0,1fr) 28px!important;
+  gap:7px!important;
+  align-items:center!important;
+  overflow:visible!important;
+}
+#home .range-row .round-btn{
+  width:28px!important;
+  min-width:28px!important;
+  height:28px!important;
+  min-height:28px!important;
+  border-radius:50%!important;
+}
+#home .range-row .round-btn svg{
+  width:17px!important;
+  height:17px!important;
+  stroke-width:2.8!important;
+}
+#home .range-row input[type=range]{
+  min-width:0!important;
+  width:100%!important;
+  height:22px!important;
+  display:block!important;
+}
+#home .range-row input[type=range]::-webkit-slider-runnable-track{
+  height:7px!important;
+  border-radius:999px!important;
+}
+#home .range-row input[type=range]::-webkit-slider-thumb{
+  width:24px!important;
+  height:24px!important;
+}
+@media (max-height:820px){
+  #home .range-row{width:calc(100% - 16px)!important;max-width:calc(100% - 16px)!important;grid-template-columns:26px minmax(0,1fr) 26px!important;gap:6px!important;margin-top:4px!important;padding:0 4px!important}
+  #home .range-row .round-btn{width:26px!important;min-width:26px!important;height:26px!important;min-height:26px!important}
+  #home .range-row .round-btn svg{width:15px!important;height:15px!important}
+}
+
+
+/* user fix 2026-07-09: keep +/- buttons inside the lower border vertically */
+#home .control{
+  height:auto!important;
+  min-height:132px!important;
+  padding:9px 12px 13px!important;
+  overflow:hidden!important;
+}
+#home .control-main{
+  grid-template-columns:82px minmax(0,1fr)!important;
+  gap:10px!important;
+}
+#home .dial{
+  width:82px!important;
+}
+#home .range-row{
+  width:calc(100% - 18px)!important;
+  max-width:calc(100% - 18px)!important;
+  margin:2px auto 0!important;
+  padding:0 5px!important;
+  grid-template-columns:24px minmax(0,1fr) 24px!important;
+  gap:7px!important;
+  align-items:center!important;
+  box-sizing:border-box!important;
+  overflow:visible!important;
+}
+#home .range-row .round-btn,
+#home .round-btn{
+  width:24px!important;
+  min-width:24px!important;
+  height:24px!important;
+  min-height:24px!important;
+  border-radius:50%!important;
+  padding:0!important;
+}
+#home .range-row .round-btn svg,
+#home .round-btn svg{
+  width:14px!important;
+  height:14px!important;
+  stroke-width:2.8!important;
+}
+#home .range-row input[type=range]{
+  height:18px!important;
+  min-width:0!important;
+}
+@media (max-height:820px){
+  #home .control{min-height:126px!important;padding:8px 12px 12px!important}
+  #home .range-row{margin-top:1px!important;grid-template-columns:23px minmax(0,1fr) 23px!important;width:calc(100% - 20px)!important;max-width:calc(100% - 20px)!important}
+  #home .range-row .round-btn,#home .round-btn{width:23px!important;min-width:23px!important;height:23px!important;min-height:23px!important}
+}
+
+
+/* user fix 2026-07-09 v3: hard inset pressure slider controls inside card border */
+#home .control{
+  height:auto!important;
+  min-height:154px!important;
+  padding:9px 18px 24px!important;
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+}
+#home .control-main{
+  grid-template-columns:82px minmax(0,1fr)!important;
+  gap:10px!important;
+}
+#home .dial{
+  width:82px!important;
+}
+#home .range-row{
+  position:relative!important;
+  width:calc(100% - 42px)!important;
+  max-width:calc(100% - 42px)!important;
+  margin:9px auto 0!important;
+  padding:0 28px!important;
+  box-sizing:border-box!important;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr)!important;
+  align-items:center!important;
+  overflow:visible!important;
+  min-height:24px!important;
+}
+#home .range-row input[type=range]{
+  grid-column:1!important;
+  width:100%!important;
+  min-width:0!important;
+  height:16px!important;
+  margin:0!important;
+  display:block!important;
+}
+#home .range-row .round-btn{
+  position:absolute!important;
+  top:50%!important;
+  transform:translateY(-50%)!important;
+  width:24px!important;
+  min-width:24px!important;
+  height:24px!important;
+  min-height:24px!important;
+  padding:0!important;
+  border-radius:50%!important;
+  z-index:2!important;
+}
+#home .range-row .round-btn:first-child{left:0!important;right:auto!important;}
+#home .range-row .round-btn:last-child{right:0!important;left:auto!important;}
+#home .range-row .round-btn svg{
+  width:14px!important;
+  height:14px!important;
+  stroke-width:3!important;
+}
+@media (max-height:820px){
+  #home .control{min-height:146px!important;padding:8px 18px 22px!important}
+  #home .range-row{margin-top:7px!important;width:calc(100% - 46px)!important;max-width:calc(100% - 46px)!important;padding:0 26px!important;min-height:22px!important}
+  #home .range-row .round-btn{width:22px!important;min-width:22px!important;height:22px!important;min-height:22px!important}
+  #home .range-row .round-btn svg{width:13px!important;height:13px!important}
+}
+
+
+/* user fix 2026-07-09 v4: fully custom pressure range, centered thumb on Android WebView */
+#home .range-row input[type=range]{
+  -webkit-appearance:none!important;
+  appearance:none!important;
+  background:transparent!important;
+  border:0!important;
+  outline:none!important;
+  height:26px!important;
+  padding:0!important;
+  margin:0!important;
+  --range-pct:32%;
+}
+#home .range-row input[type=range]::-webkit-slider-runnable-track{
+  -webkit-appearance:none!important;
+  height:7px!important;
+  border-radius:999px!important;
+  background:linear-gradient(to right,var(--green) 0%,var(--green) var(--range-pct),rgba(246,246,241,.88) var(--range-pct),rgba(246,246,241,.88) 100%)!important;
+  border:1px solid rgba(255,255,255,.48)!important;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.22),0 1px 2px rgba(255,255,255,.12)!important;
+}
+#home .range-row input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none!important;
+  appearance:none!important;
+  width:23px!important;
+  height:23px!important;
+  border-radius:50%!important;
+  background:var(--green)!important;
+  border:0!important;
+  margin-top:-9px!important;
+  box-shadow:0 2px 8px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.26)!important;
+}
+#home .range-row input[type=range]::-moz-range-track{
+  height:7px!important;
+  border-radius:999px!important;
+  background:rgba(246,246,241,.88)!important;
+  border:1px solid rgba(255,255,255,.48)!important;
+}
+#home .range-row input[type=range]::-moz-range-progress{
+  height:7px!important;
+  border-radius:999px!important;
+  background:var(--green)!important;
+}
+#home .range-row input[type=range]::-moz-range-thumb{
+  width:23px!important;
+  height:23px!important;
+  border-radius:50%!important;
+  background:var(--green)!important;
+  border:0!important;
+}
+
 </style>
 </head>
 <body>
@@ -3101,8 +3315,16 @@ function sendCommand(text){
 }
 function setPressure(value){
   const v=Math.max(0,Math.min(10,Number(value))).toFixed(1);
-  pressureInputs.forEach(input=>input.value=v);
+  pressureInputs.forEach(input=>{input.value=v;updatePressureSliderFill(input);});
   pressureTexts.forEach(el=>el.textContent=v);
+}
+function updatePressureSliderFill(input){
+  if(!input)return;
+  const min=Number(input.min || 0);
+  const max=Number(input.max || 10);
+  const val=Number(input.value || 0);
+  const pct=max>min ? Math.max(0,Math.min(100,((val-min)/(max-min))*100)) : 0;
+  input.style.setProperty('--range-pct',pct.toFixed(2)+'%');
 }
 function setText(selector,value){
   document.querySelectorAll(selector).forEach(el=>{el.textContent=value});
@@ -3563,7 +3785,7 @@ function fsrSummary(data){
   }
   ['fsr1_n','fsr2_n','fsr3_n','fsr4_n','fsr_1_n','fsr_2_n','fsr_3_n','fsr_4_n','fsr1','fsr2','fsr3','fsr4','fsr0','fsr_0'].forEach(k=>add(data[k],true));
   const max=values.length ? Math.max(...values) : null;
-  return {values,max,onPillow:max===null ? null : max>=0.05};
+  return {values,max,onPillow:max===null ? null : max>=0.10};
 }
 function envSummary(data){
   const temp=pickNumber(data,['temperature_c','temp_c','sht31_temp_c','temperature']);
@@ -3639,8 +3861,7 @@ function buildHomeSummary(data){
     if(presence)presence.innerHTML='<i data-lucide="activity"></i>等待数据';
     if(insightTitle)insightTitle.textContent='小安判断：等待传感器';
     if(insightDetail)insightDetail.textContent='没有真实数据时不再显示演示结论。';
-    installMcpUserConfigControls();
-installIcons();
+    installIcons();
     return;
   }
   const onText=fsr.onPillow===null?'等待 FSR':(fsr.onPillow?'枕上有人':'枕上无人');
@@ -3669,7 +3890,7 @@ function updateStatusRows(data){
   if(fsr.onPillow===null){
     updateRow('pillow','枕上状态','等待 FSR402 压力数据。','等待','');
   }else{
-    updateRow('pillow','枕上状态','FSR 最大压力 '+(fsr.max||0).toFixed(2)+' N；阈值 >= 0.05 N 判定有人。',fsr.onPillow?'有人':'无人',fsr.onPillow?'good':'');
+    updateRow('pillow','枕上状态','FSR 最大压力 '+(fsr.max||0).toFixed(2)+' N；阈值 >= 0.10 N 判定有人。',fsr.onPillow?'有人':'无人',fsr.onPillow?'good':'');
   }
   if(p===null){
     updateRow('pressure','枕头气压','等待真实气压回传；不会用假数据代替。','等待','');
@@ -4209,6 +4430,7 @@ connectAppWs();
 bindAvatarWorkshop();
 installPillowHoldControls();
 installMcpUserConfigControls();
+pressureInputs.forEach(updatePressureSliderFill);
 installIcons();
 </script>
 </body>

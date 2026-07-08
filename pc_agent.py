@@ -35,6 +35,14 @@ import websockets
 # 确保能 import 同目录下的 config
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+try:
+    # Windows 控制台默认编码可能是 GBK，遇到 emoji/特殊字符会在 print 时抛
+    # UnicodeEncodeError，导致 WebSocket 断开。统一改成 UTF-8 并替换无法显示字符。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 # 云端服务 WebSocket 地址
 WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/pc_agent")

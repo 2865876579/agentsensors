@@ -145,14 +145,14 @@ TTS_PLAYBACK_COOLDOWN_SEC = 4.0
 
 PRE_SLEEP_WINDOW_MINUTES = 10
 SLEEP_GREETING_WINDOW_MINUTES = 180
-PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 0.05
-ALARM_FSR_ON_THRESHOLD_N = 0.05
-ALARM_FSR_OFF_THRESHOLD_N = 0.025
+PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 0.10
+ALARM_FSR_ON_THRESHOLD_N = 0.10
+ALARM_FSR_OFF_THRESHOLD_N = 0.10
 PRE_SLEEP_LIGHT_THRESHOLD_LUX = 140.0
 PRE_SLEEP_REPLY_TIMEOUT_SEC = 30.0
 AIR_BAD_PPM_THRESHOLD = 2.0
 AIR_BAD_RESET_PPM = 1.5
-DRY_HUMIDITY_THRESHOLD = 54.0
+DRY_HUMIDITY_THRESHOLD = 45.0
 DRY_HUMIDITY_RESET_PCT = 55.0
 SNORE_TARGET_DELTA_KPA = 0.8
 SNORE_DEFAULT_TARGET_KPA = 4.0
@@ -170,7 +170,12 @@ async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int
     future: asyncio.Future = asyncio.get_event_loop().create_future()
     _pc_command_futures[command_id] = future
 
-    sent = await send_pc_command({"action": action, "params": params}, client_id, turn_id)
+    sent = await send_pc_command(
+        {"action": action, "params": params},
+        client_id,
+        turn_id,
+        command_id=command_id,
+    )
     if not sent:
         _pc_command_futures.pop(command_id, None)
         return "发送命令失败，电脑可能断开了"
@@ -345,7 +350,13 @@ def is_exit_phrase(text: str) -> bool:
 
 
 def is_sleep_greeting_trigger(text: str) -> bool:
-    return str(text or "").strip() == SLEEP_GREETING_TRIGGER_TEXT
+    raw = str(text or "").strip()
+    if raw == SLEEP_GREETING_TRIGGER_TEXT:
+        return True
+    # ESP32 ??? send_text_with_persona() ????? [AI_PERSONA=...] ???
+    # ??????????????????????????????? listen_once?
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    return any(line == SLEEP_GREETING_TRIGGER_TEXT for line in lines)
 
 
 async def drop_esp32_client(client_id: str, reason: str = "") -> None:
@@ -661,12 +672,13 @@ async def answer_music_request_if_needed(client_id: str, text: str, turn_id: int
         print(f"[Music] no playable result for query={music_query!r}")
     return True
 
-async def send_pc_command(pc_command: dict, client_id: str, turn_id: int) -> bool:
+async def send_pc_command(pc_command: dict, client_id: str, turn_id: int,
+                          command_id: str | None = None) -> bool:
     """把 LLM 产生的电脑控制命令转发给任意一个已连接的 PC Agent。"""
     if not pc_agents:
         return False
 
-    command_id = f"{client_id}:{turn_id}:{int(time.time() * 1000)}"
+    command_id = command_id or f"{client_id}:{turn_id}:{int(time.time() * 1000)}"
     pc_command_contexts[command_id] = {
         "client_id": client_id,
         "turn_id": turn_id,
@@ -1784,7 +1796,7 @@ async def _maybe_auto_control_environment(client_id: str, sensor_payload: dict, 
 
     if sensor_payload.get("env_valid"):
         humidity = _safe_float(sensor_payload.get("humidity_pct"))
-        if humidity <= DRY_HUMIDITY_THRESHOLD and not state.get("humidifier_alarm_active"):
+        if humidity < DRY_HUMIDITY_THRESHOLD and not state.get("humidifier_alarm_active"):
             state["humidifier_alarm_active"] = True
             await send_json_to_esp32(client_id, {
                 "type": "ir_cmd",
@@ -1802,7 +1814,7 @@ async def _maybe_auto_control_environment(client_id: str, sensor_payload: dict, 
                 event="auto_humidifier_on",
                 allow_voice=allow_voice,
             )
-        elif humidity >= DRY_HUMIDITY_RESET_PCT and state.get("humidifier_alarm_active"):
+        elif humidity > DRY_HUMIDITY_RESET_PCT and state.get("humidifier_alarm_active"):
             state["humidifier_alarm_active"] = False
             await send_json_to_esp32(client_id, {
                 "type": "ir_cmd",
@@ -1820,7 +1832,7 @@ async def _maybe_auto_control_environment(client_id: str, sensor_payload: dict, 
                 event="auto_humidifier_off",
                 allow_voice=allow_voice,
             )
-        elif humidity >= DRY_HUMIDITY_RESET_PCT:
+        elif humidity > DRY_HUMIDITY_RESET_PCT:
             state["humidifier_alarm_active"] = False
 
 
@@ -2963,6 +2975,27 @@ async def esp32_endpoint(websocket: WebSocket):
                         "data": data,
                     })
 
+                elif msg_type == "avatar_state":
+                    if latest_sensor_data is None:
+                        latest_sensor_data = {
+                            "received_at": time.time(),
+                            "client_id": client_id,
+                            "data": {},
+                        }
+                    latest_sensor_data["received_at"] = time.time()
+                    latest_sensor_data["client_id"] = client_id
+                    sensor_data = latest_sensor_data.setdefault("data", {})
+                    sensor_data["avatar_sync_ok"] = bool(data.get("ok"))
+                    sensor_data["avatar_sync_ret"] = data.get("ret")
+                    await broadcast_to_apps({
+                        "type": "avatar_state",
+                        "esp32_connected": True,
+                        "ok": bool(data.get("ok")),
+                        "ret": data.get("ret"),
+                        "data": data,
+                        "latest": latest_sensor_data,
+                    })
+
                 elif msg_type == "ir_state":
                     if latest_sensor_data is None:
                         latest_sensor_data = {
@@ -3109,7 +3142,7 @@ async def api_avatar_generate(payload: dict):
 
 @app.post("/api/avatar/sync")
 async def api_avatar_sync(payload: dict):
-    """通知 ESP32 有新的 LCD 形象资源可下载。ESP32 热切换逻辑随后接入。"""
+    """通知 ESP32 下载新的 LCD 形象资源并热切换。"""
     manifest = get_current_avatar_manifest()
     if not manifest.get("ok"):
         raise HTTPException(status_code=404, detail=manifest.get("error") or "当前没有可同步的形象")
@@ -3130,7 +3163,7 @@ async def api_avatar_sync(payload: dict):
         "ok": ok,
         "esp32_connected": bool(target),
         "manifest": manifest,
-        "note": "云端资源已准备好；ESP32 端需要接入 avatar_update 下载与切换逻辑。",
+        "note": "已通知 ESP32 下载并切换 LCD 形象。" if ok else "ESP32 未连接，云端资源已准备好。",
     }
 
 
@@ -3233,9 +3266,10 @@ async def app_endpoint(websocket: WebSocket):
                     })
             elif msg_type == "pillow_cmd":
                 target = pick_esp32_client(data.get("client_id"))
+                action = str(data.get("action") or "").strip()
                 payload = {
                     "type": "pillow_cmd",
-                    "action": data.get("action"),
+                    "action": action,
                     "duration_sec": int(data.get("duration_sec") or 3),
                 }
                 if data.get("target_kpa") is not None:
@@ -3243,11 +3277,19 @@ async def app_endpoint(websocket: WebSocket):
                     if math.isfinite(target_value):
                         payload["target_kpa"] = max(0.0, min(10.0, target_value))
                 ok = await send_json_to_esp32(target, payload) if target else False
+                manual_alarm_stop = ok and action in {"stop", "halt"} and bool(alarm_runtime.get("active"))
                 await websocket.send_text(json.dumps({
                     "type": "command_ack",
                     "target": "pillow",
                     "ok": ok,
                 }, ensure_ascii=False))
+                if manual_alarm_stop and target:
+                    await cancel_active_task(target)
+                    await broadcast_alarm_state(
+                        "done",
+                        "已手动暂停/急停，闹钟联动已停止",
+                        {"id": alarm_runtime.get("alarm_id") or ""},
+                    )
             elif msg_type == "led_cmd":
                 target = pick_esp32_client(data.get("client_id"))
                 payload = {
@@ -3407,6 +3449,9 @@ WEB_MEDIA_TYPES = {
     "xiaoan-bedroom.jpg": "image/jpeg",
     "xiaoan-bedroom-anime-soft.png": "image/png",
     "xiaoan-device.png": "image/png",
+    "xiaoan-smart-pillow.apk": "application/vnd.android.package-archive",
+    "xiaoan-smart-pillow-v1.0.1.apk": "application/vnd.android.package-archive",
+    "xiaoan-smart-pillow-v1.0.2.apk": "application/vnd.android.package-archive",
 }
 
 
@@ -3416,7 +3461,15 @@ def web_file_response(filename: str) -> FileResponse:
     path = WEB_DIR / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="web asset not uploaded")
-    return FileResponse(path, media_type=WEB_MEDIA_TYPES[filename])
+    return FileResponse(
+        path,
+        media_type=WEB_MEDIA_TYPES[filename],
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/")
@@ -3443,6 +3496,21 @@ async def h5_bedroom_anime():
 @app.get("/xiaoan-device.png")
 async def h5_device():
     return web_file_response("xiaoan-device.png")
+
+
+@app.get("/xiaoan-smart-pillow.apk")
+async def h5_apk():
+    return web_file_response("xiaoan-smart-pillow.apk")
+
+
+@app.get("/xiaoan-smart-pillow-v1.0.1.apk")
+async def h5_apk_v101():
+    return web_file_response("xiaoan-smart-pillow-v1.0.1.apk")
+
+
+@app.get("/xiaoan-smart-pillow-v1.0.2.apk")
+async def h5_apk_v102():
+    return web_file_response("xiaoan-smart-pillow-v1.0.2.apk")
 
 
 @app.get("/h5/{filename}")

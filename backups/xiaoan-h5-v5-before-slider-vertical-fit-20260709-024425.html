@@ -1,0 +1,4273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>小安睡眠中控</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%230b1d2e'/%3E%3Cpath d='M18 34c0-9 6-16 14-16s14 7 14 16v10H18V34Z' fill='%2369e5c1'/%3E%3Ccircle cx='25' cy='32' r='3' fill='%230b1d2e'/%3E%3Ccircle cx='39' cy='32' r='3' fill='%230b1d2e'/%3E%3C/svg%3E">
+<script src="./lucide.min.js"></script>
+<style>
+:root{
+  --room-photo:url("./xiaoan-bedroom.jpg");
+  --app-bg-photo:url("./xiaoan-bedroom-anime-soft.png");
+  --bg:#08070b;
+  --surface:#101014;
+  --panel:#15171b;
+  --panel-2:#1d2026;
+  --line:rgba(248,245,236,.14);
+  --line-strong:rgba(248,245,236,.24);
+  --text:#faf6ee;
+  --muted:#b9b0a5;
+  --dim:#7a746d;
+  --green:#69e5c1;
+  --blue:#a8b7ff;
+  --amber:#ffd36b;
+  --coral:#ff8d72;
+  --violet:#c5a3ff;
+  --ink:#06100b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:#030402}
+body{
+  margin:0;
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  background:
+    linear-gradient(145deg,#0b0b12 0%,#07110e 46%,#14100a 100%);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+  letter-spacing:0;
+}
+button,input{font:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.app{
+  width:100%;
+  max-width:430px;
+  min-height:100vh;
+  position:relative;
+  overflow:hidden;
+  background:
+    linear-gradient(135deg,rgba(105,229,193,.16),transparent 34%),
+    linear-gradient(235deg,rgba(197,163,255,.15),transparent 42%),
+    linear-gradient(0deg,rgba(255,211,107,.08),transparent 46%),
+    linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),
+    linear-gradient(180deg,#0a0b10,#070806 52%,#0e0a08);
+  background-size:auto,auto,auto,48px 48px,auto;
+}
+.app::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.035),transparent 22%,transparent 78%,rgba(0,0,0,.28));
+  z-index:0;
+}
+.screen{
+  position:relative;
+  z-index:1;
+  min-height:100vh;
+  padding:14px 14px 96px;
+}
+.topbar{
+  height:52px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.top-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.top-icon-btn{
+  width:34px;
+  height:34px;
+  flex:0 0 auto;
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:12px;
+  color:var(--text);
+  background:rgba(255,255,255,.075);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.top-icon-btn.active{
+  color:var(--green);
+  border-color:rgba(105,229,193,.38);
+  background:rgba(105,229,193,.13);
+}
+.top-icon-btn i{
+  width:17px;
+  height:17px;
+}
+.brand strong{
+  display:block;
+  font-size:24px;
+  line-height:1;
+  font-weight:900;
+}
+.brand span{
+  display:block;
+  margin-top:5px;
+  color:var(--muted);
+  font-size:11px;
+}
+.status-pill{
+  height:34px;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:0 10px;
+  border:1px solid rgba(105,229,193,.36);
+  border-radius:8px;
+  color:var(--green);
+  background:linear-gradient(135deg,rgba(105,229,193,.18),rgba(168,183,255,.08));
+  box-shadow:0 10px 28px rgba(105,229,193,.08);
+  font-size:12px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.dot{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 0 4px rgba(98,224,165,.1);
+}
+.page{display:none}
+.page.active{display:block}
+.scene{
+  margin-top:12px;
+  min-height:258px;
+  position:relative;
+  border:1px solid var(--line);
+  border-radius:8px;
+  overflow:hidden;
+  background:
+    linear-gradient(180deg,rgba(8,7,11,.16),rgba(8,7,11,.45) 48%,rgba(8,7,11,.92)),
+    linear-gradient(135deg,rgba(105,229,193,.18),transparent 42%),
+    var(--app-bg-photo) center/cover;
+  box-shadow:0 22px 64px rgba(0,0,0,.38);
+}
+.scene::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  width:82%;
+  height:68%;
+  z-index:2;
+  pointer-events:none;
+  background:linear-gradient(135deg,rgba(5,6,8,.9),rgba(5,6,8,.58) 58%,transparent);
+}
+.scene-head{
+  position:relative;
+  z-index:3;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  padding:16px 16px 0;
+}
+.scene-title h1{
+  margin:0;
+  font-size:24px;
+  line-height:1.18;
+  font-weight:950;
+}
+.scene-title p{
+  margin:7px 0 0;
+  max-width:222px;
+  color:#ded7c9;
+  font-size:12px;
+  line-height:1.55;
+}
+.mode-chip{
+  min-width:76px;
+  padding:8px 9px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  text-align:right;
+  background:linear-gradient(145deg,rgba(21,23,27,.72),rgba(21,31,29,.52));
+  backdrop-filter:blur(16px);
+  box-shadow:0 18px 36px rgba(0,0,0,.26);
+}
+.mode-chip span{
+  display:block;
+  color:var(--dim);
+  font-size:10px;
+}
+.mode-chip strong{
+  display:block;
+  margin-top:2px;
+  font-size:15px;
+}
+.device{
+  position:absolute;
+  left:auto;
+  right:-24px;
+  bottom:-42px;
+  transform:none;
+  width:255px;
+  max-width:none;
+  z-index:1;
+  filter:drop-shadow(0 18px 34px rgba(0,0,0,.42));
+  opacity:.66;
+}
+.live-badge{
+  position:absolute;
+  left:16px;
+  bottom:14px;
+  z-index:3;
+  height:32px;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:0 10px;
+  border:1px solid rgba(168,183,255,.34);
+  border-radius:8px;
+  color:#dfe5ff;
+  background:linear-gradient(135deg,rgba(41,46,74,.74),rgba(16,20,24,.68));
+  backdrop-filter:blur(12px);
+  font-size:11px;
+  font-weight:800;
+}
+.insight{
+  margin-top:10px;
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  border:1px solid rgba(105,229,193,.24);
+  border-radius:8px;
+  background:
+    linear-gradient(135deg,rgba(105,229,193,.13),rgba(168,183,255,.08) 54%,rgba(255,211,107,.06)),
+    rgba(12,18,17,.68);
+  padding:12px;
+}
+.insight i,.panel-title i,.quick button i,.tab i,.send-btn i,.round-btn i{
+  width:18px;
+  height:18px;
+  flex:0 0 auto;
+}
+.insight strong{
+  display:block;
+  font-size:13px;
+  line-height:1.3;
+}
+.insight span{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.55;
+}
+.control{
+  margin-top:10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:
+    linear-gradient(145deg,rgba(24,28,33,.92),rgba(15,20,18,.9) 48%,rgba(28,22,31,.82)),
+    rgba(19,23,17,.88);
+  box-shadow:0 18px 52px rgba(0,0,0,.28);
+  padding:14px;
+}
+.control-main{
+  display:grid;
+  grid-template-columns:132px 1fr;
+  gap:12px;
+  align-items:center;
+}
+.dial{
+  width:132px;
+  aspect-ratio:1;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  position:relative;
+  background:conic-gradient(from -32deg,var(--green) 0 43%,var(--blue) 43% 62%,rgba(255,255,255,.1) 62% 100%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 20px 44px rgba(105,229,193,.13);
+}
+.dial::before{
+  content:"";
+  position:absolute;
+  inset:10px;
+  border-radius:50%;
+  background:#0b0d0a;
+  border:1px solid var(--line);
+}
+.dial-value{
+  position:relative;
+  text-align:center;
+}
+.dial-value strong{
+  display:block;
+  font-size:34px;
+  line-height:1;
+  font-weight:950;
+}
+.dial-value span{
+  display:block;
+  margin-top:5px;
+  color:var(--dim);
+  font-size:11px;
+}
+.control-copy .label{
+  color:var(--muted);
+  font-size:12px;
+}
+.control-copy h2{
+  margin:5px 0 8px;
+  font-size:19px;
+  line-height:1.25;
+}
+.control-copy p{
+  margin:0;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.55;
+}
+.range-row{
+  margin-top:14px;
+  display:grid;
+  grid-template-columns:42px 1fr 42px;
+  gap:8px;
+  align-items:center;
+}
+.round-btn{
+  height:42px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(255,255,255,.025));
+  color:var(--text);
+  display:grid;
+  place-items:center;
+}
+input[type=range]{
+  width:100%;
+  accent-color:var(--green);
+}
+.quick{
+  margin-top:10px;
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+}
+.quick button{
+  min-height:58px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.07),rgba(255,255,255,.025));
+  color:var(--text);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  font-size:11px;
+  font-weight:850;
+}
+.quick button.primary{
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  color:var(--ink);
+  border-color:rgba(139,231,255,.55);
+  box-shadow:0 16px 34px rgba(105,229,193,.18);
+}
+.quick button.warn{
+  color:var(--coral);
+  border-color:rgba(238,128,111,.32);
+  background:linear-gradient(145deg,rgba(255,141,114,.16),rgba(255,141,114,.05));
+}
+.command{
+  margin-top:10px;
+  display:grid;
+  grid-template-columns:1fr 48px;
+  gap:8px;
+}
+.command input{
+  min-width:0;
+  height:48px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:0 12px;
+  background:#090b08;
+  color:var(--text);
+  outline:none;
+}
+.command input:focus{
+  border-color:rgba(98,224,165,.46);
+  box-shadow:0 0 0 3px rgba(98,224,165,.08);
+}
+.send-btn{
+  border:0;
+  border-radius:8px;
+  background:linear-gradient(135deg,var(--amber),#ff9f7c);
+  color:#171104;
+  display:grid;
+  place-items:center;
+}
+.section{
+  margin-top:18px;
+}
+.panel-title{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:0 2px 10px;
+}
+.panel-title h2{
+  margin:0;
+  font-size:15px;
+}
+.panel-title span{
+  color:var(--muted);
+  font-size:11px;
+}
+.metrics{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:8px;
+}
+.live-metrics{
+  margin-bottom:10px;
+}
+.metric{
+  min-height:88px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.065),rgba(255,255,255,.024));
+  padding:12px;
+}
+.metric .name{
+  color:var(--muted);
+  font-size:11px;
+}
+.metric .num{
+  margin-top:9px;
+  font-size:26px;
+  line-height:1;
+  font-weight:950;
+}
+.metric .sub{
+  margin-top:6px;
+  color:var(--dim);
+  font-size:10px;
+}
+.feed{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.feed-item{
+  min-height:66px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.065),rgba(255,255,255,.024));
+  padding:12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.feed-item strong{
+  display:block;
+  font-size:13px;
+}
+.feed-item span{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+}
+.tag{
+  min-width:42px;
+  height:28px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(157,178,255,.28);
+  border-radius:8px;
+  color:var(--blue);
+  background:rgba(157,178,255,.08);
+  font-size:11px;
+  font-weight:850;
+  white-space:nowrap;
+}
+.tag.good{
+  color:var(--green);
+  border-color:rgba(98,224,165,.28);
+  background:rgba(98,224,165,.08);
+}
+.tag.warn{
+  color:var(--coral);
+  border-color:rgba(238,128,111,.28);
+  background:rgba(238,128,111,.08);
+}
+.chat{
+  margin-top:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.bubble{
+  max-width:88%;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.07),rgba(255,255,255,.026));
+  padding:11px 12px;
+  color:var(--text);
+  font-size:13px;
+  line-height:1.55;
+}
+.bubble.didi-card{
+  border-color:rgba(130,231,255,.24);
+}
+.bubble.didi-card a{
+  color:#9feeff;
+  font-weight:800;
+  text-decoration:none;
+}
+.bubble.didi-card small{
+  color:var(--muted);
+}
+.bubble.me{
+  margin-left:auto;
+  color:#12150f;
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  border-color:rgba(139,231,255,.55);
+}
+.control-panel{
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.065),rgba(255,255,255,.024));
+  padding:14px;
+}
+.pressure-top{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+}
+.pressure-top strong{
+  font-size:40px;
+  line-height:1;
+  font-weight:950;
+}
+.pressure-top span{
+  color:var(--muted);
+  font-size:12px;
+}
+.button-grid{
+  margin-top:10px;
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+}
+.button-grid button{
+  height:42px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:linear-gradient(145deg,rgba(255,255,255,.07),rgba(255,255,255,.025));
+  color:var(--text);
+  font-weight:850;
+}
+.button-grid button.primary{
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  color:var(--ink);
+  border-color:rgba(139,231,255,.55);
+}
+.button-grid button.warn{
+  color:var(--coral);
+  border-color:rgba(238,128,111,.3);
+  background:linear-gradient(145deg,rgba(255,141,114,.16),rgba(255,141,114,.05));
+}
+.tabbar{
+  position:fixed;
+  left:50%;
+  bottom:0;
+  transform:translateX(-50%);
+  width:100%;
+  max-width:430px;
+  height:78px;
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:6px;
+  background:rgba(7,8,6,.9);
+  border-top:1px solid var(--line);
+  backdrop-filter:blur(18px);
+  z-index:5;
+}
+.tab{
+  min-width:0;
+  border:0;
+  border-radius:8px;
+  color:var(--muted);
+  background:transparent;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  font-size:10px;
+}
+.tab i{
+  display:block;
+  color:currentColor;
+}
+.tab.active{
+  color:var(--text);
+  background:linear-gradient(145deg,rgba(105,229,193,.16),rgba(168,183,255,.09));
+}
+.toast{
+  position:fixed;
+  left:50%;
+  bottom:88px;
+  transform:translateX(-50%) translateY(10px);
+  width:calc(100% - 32px);
+  max-width:398px;
+  padding:12px 13px;
+  border-radius:8px;
+  background:var(--text);
+  color:#080906;
+  font-size:13px;
+  font-weight:900;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .2s,transform .2s;
+  z-index:9;
+}
+.toast.show{
+  opacity:1;
+  transform:translateX(-50%);
+}
+
+/* iOS-style visual refresh */
+:root{
+  --ios-glass:rgba(255,255,255,.028);
+  --ios-glass-strong:rgba(255,255,255,.045);
+  --ios-line:rgba(255,255,255,.18);
+  --ios-line-soft:rgba(255,255,255,.1);
+  --ios-shadow:0 22px 60px rgba(0,0,0,.34);
+  --green:#8cf0d0;
+  --blue:#82e7ff;
+  --amber:#ffd86f;
+  --coral:#ff9d7d;
+  --violet:#b8a8ff;
+}
+html{background:#05070c}
+body{
+  background:linear-gradient(145deg,#0a0d16 0%,#071112 48%,#14110d 100%);
+}
+.app{
+  background:
+    linear-gradient(180deg,rgba(6,8,14,.2),rgba(7,9,14,.34) 36%,rgba(7,8,12,.52)),
+    radial-gradient(circle at 18% 72%,rgba(255,184,154,.12),transparent 24%),
+    radial-gradient(circle at 82% 24%,rgba(130,231,255,.12),transparent 28%),
+    var(--app-bg-photo) center bottom/cover no-repeat,
+    linear-gradient(180deg,#090b13,#07080c 54%,#09070c);
+}
+.app::before{
+  content:"";
+  position:absolute;
+  inset:-28px;
+  z-index:0;
+  pointer-events:none;
+  background:
+    radial-gradient(circle at 74% 22%,rgba(130,231,255,.08),transparent 22%),
+    radial-gradient(circle at 22% 76%,rgba(255,184,154,.07),transparent 24%);
+  filter:none;
+  opacity:.9;
+  transform:scale(1.01);
+}
+.app::after{
+  z-index:1;
+  background:
+    linear-gradient(180deg,rgba(5,7,12,.08),rgba(5,7,12,.14) 18%,rgba(5,7,12,.22) 54%,rgba(4,5,10,.34)),
+    linear-gradient(90deg,rgba(5,7,12,.08),rgba(5,7,12,.02) 28%,rgba(5,7,12,.14) 100%);
+}
+.screen{
+  position:relative;
+  z-index:2;
+  isolation:isolate;
+  padding:18px 16px 124px;
+}
+.screen::before{
+  content:none;
+}
+.topbar{
+  height:58px;
+}
+.brand strong{
+  font-size:25px;
+  text-shadow:0 10px 26px rgba(0,0,0,.34);
+}
+.brand span{
+  color:rgba(250,246,238,.7);
+}
+.status-pill{
+  height:38px;
+  padding:0 13px;
+  border-radius:20px;
+  border-color:rgba(140,240,208,.32);
+  color:#dffdf3;
+  background:linear-gradient(135deg,rgba(140,240,208,.22),rgba(130,231,255,.1));
+  backdrop-filter:blur(18px) saturate(1.25);
+  -webkit-backdrop-filter:blur(18px) saturate(1.25);
+}
+.scene{
+  min-height:286px;
+  border-radius:28px;
+  border-color:rgba(255,255,255,.18);
+  background:
+    linear-gradient(180deg,rgba(6,8,12,.16),rgba(7,9,14,.42) 46%,rgba(7,9,14,.92)),
+    radial-gradient(circle at 76% 30%,rgba(255,212,152,.18),transparent 24%),
+    linear-gradient(135deg,rgba(255,255,255,.05),transparent 24%),
+    var(--room-photo) center 34%/cover;
+  box-shadow:
+    var(--ios-shadow),
+    inset 0 1px 0 rgba(255,255,255,.08),
+    inset 0 -88px 120px rgba(5,7,12,.42);
+}
+.scene::before{
+  width:66%;
+  height:64%;
+  background:linear-gradient(140deg,rgba(4,6,10,.86),rgba(4,6,10,.46) 52%,transparent);
+}
+.scene::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:1;
+  pointer-events:none;
+  background:
+    radial-gradient(circle at 80% 64%,rgba(255,214,160,.14),transparent 18%),
+    linear-gradient(180deg,transparent 44%,rgba(5,7,12,.2) 100%);
+}
+.scene-head{
+  padding:18px 18px 0;
+}
+.scene-title h1{
+  font-size:25px;
+  line-height:1.18;
+  text-shadow:0 12px 28px rgba(0,0,0,.52);
+}
+.scene-title p{
+  max-width:240px;
+  color:rgba(250,246,238,.78);
+  text-shadow:0 8px 20px rgba(0,0,0,.42);
+}
+.mode-chip{
+  border-radius:22px;
+  border-color:rgba(255,255,255,.18);
+  background:rgba(18,22,29,.5);
+  backdrop-filter:blur(22px) saturate(1.2);
+  -webkit-backdrop-filter:blur(22px) saturate(1.2);
+}
+.device{
+  display:none;
+}
+.live-badge{
+  left:18px;
+  bottom:18px;
+  height:38px;
+  border-radius:19px;
+  border-color:rgba(184,168,255,.34);
+  background:rgba(31,35,54,.55);
+  backdrop-filter:blur(18px) saturate(1.2);
+  -webkit-backdrop-filter:blur(18px) saturate(1.2);
+}
+.insight,
+.control,
+.metric,
+.feed-item,
+.bubble,
+.control-panel{
+  border-color:var(--ios-line);
+  background:var(--ios-glass);
+  backdrop-filter:blur(5px) saturate(1.01);
+  -webkit-backdrop-filter:blur(5px) saturate(1.01);
+  box-shadow:
+    0 6px 14px rgba(0,0,0,.05),
+    inset 0 1px 0 rgba(255,255,255,.2);
+}
+.insight{
+  border-radius:24px;
+  background:
+    linear-gradient(135deg,rgba(140,240,208,.035),rgba(130,231,255,.02) 48%,rgba(255,216,111,.02)),
+    var(--ios-glass);
+}
+.control{
+  border-radius:28px;
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.03),rgba(255,255,255,.005)),
+    rgba(255,255,255,.018);
+  box-shadow:
+    0 5px 12px rgba(0,0,0,.04),
+    inset 0 1px 0 rgba(255,255,255,.22);
+}
+.dial{
+  background:conic-gradient(from -38deg,#8cf0d0 0 44%,#82e7ff 44% 63%,rgba(255,255,255,.12) 63% 100%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 18px 42px rgba(130,231,255,.15);
+}
+.dial::before{
+  background:rgba(5,8,11,.9);
+  border-color:rgba(255,255,255,.12);
+}
+.round-btn,
+.quick button,
+.button-grid button{
+  border-color:var(--ios-line);
+  background:rgba(255,255,255,.016);
+  backdrop-filter:blur(4px) saturate(1.01);
+  -webkit-backdrop-filter:blur(4px) saturate(1.01);
+  box-shadow:
+    0 4px 10px rgba(0,0,0,.035),
+    inset 0 1px 0 rgba(255,255,255,.2);
+}
+.round-btn{
+  border-radius:20px;
+}
+.quick button{
+  min-height:64px;
+  border-radius:22px;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.004)),
+    rgba(255,255,255,.012);
+}
+.quick button.primary,
+.button-grid button.primary,
+.bubble.me{
+  color:#f3fffb;
+  border-color:rgba(130,231,255,.34);
+  background:
+    linear-gradient(135deg,rgba(140,240,208,.085),rgba(130,231,255,.06)),
+    rgba(255,255,255,.018);
+  box-shadow:
+    0 5px 12px rgba(130,231,255,.05),
+    inset 0 1px 0 rgba(255,255,255,.24);
+}
+.quick button.warn,
+.button-grid button.warn{
+  color:#ffd8cf;
+  border-color:rgba(255,157,125,.28);
+  background:
+    linear-gradient(135deg,rgba(255,157,125,.055),rgba(255,157,125,.02)),
+    rgba(255,255,255,.01);
+  box-shadow:
+    0 4px 10px rgba(255,157,125,.03),
+    inset 0 1px 0 rgba(255,255,255,.2);
+}
+.command{
+  grid-template-columns:1fr 56px;
+  gap:10px;
+}
+.command input{
+  height:56px;
+  border-radius:24px;
+  border-color:rgba(255,255,255,.14);
+  background:rgba(8,10,15,.54);
+  backdrop-filter:blur(20px) saturate(1.18);
+  -webkit-backdrop-filter:blur(20px) saturate(1.18);
+}
+.send-btn{
+  border-radius:22px;
+  background:linear-gradient(135deg,#ffd86f,#ff9d7d);
+  box-shadow:0 16px 34px rgba(255,157,125,.14);
+}
+.metric,
+.feed-item,
+.bubble,
+.control-panel{
+  border-radius:24px;
+}
+.button-grid button{
+  border-radius:18px;
+}
+.tag{
+  border-radius:16px;
+  background:rgba(130,231,255,.1);
+}
+.tabbar{
+  width:calc(100% - 24px);
+  max-width:406px;
+  height:78px;
+  bottom:12px;
+  grid-template-columns:repeat(4,1fr);
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:28px;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,.004)),
+    rgba(255,255,255,.018);
+  backdrop-filter:blur(5px) saturate(1.01);
+  -webkit-backdrop-filter:blur(5px) saturate(1.01);
+  box-shadow:
+    0 8px 18px rgba(0,0,0,.05),
+    inset 0 1px 0 rgba(255,255,255,.2);
+}
+.tab{
+  border-radius:22px;
+}
+.tab.active{
+  color:#ffffff;
+  background:rgba(255,255,255,.03);
+}
+
+/* Keep the first tab as a one-screen iOS control surface */
+#home > .command,
+#home > .section{
+  display:none;
+}
+#home .scene{
+  min-height:246px;
+}
+#home .scene-head{
+  padding:16px 16px 0;
+}
+#home .scene-title h1{
+  font-size:23px;
+}
+#home .scene-title p{
+  max-width:230px;
+  font-size:12px;
+}
+#home .insight{
+  margin-top:8px;
+  padding:11px 12px;
+}
+#home .insight span{
+  margin-top:3px;
+  line-height:1.45;
+}
+#home .control{
+  margin-top:8px;
+  padding:10px 10px 11px;
+}
+#home .control-main{
+  grid-template-columns:108px 1fr;
+  gap:11px;
+}
+#home .dial{
+  width:108px;
+}
+#home .dial::before{
+  inset:8px;
+}
+#home .dial-value strong{
+  font-size:29px;
+}
+#home .dial-value span{
+  margin-top:4px;
+}
+#home .control-copy h2{
+  margin:4px 0 6px;
+  font-size:17px;
+}
+#home .control-copy p{
+  display:none;
+}
+#home .range-row{
+  margin-top:10px;
+  grid-template-columns:38px 1fr 38px;
+}
+#home .round-btn{
+  height:38px;
+  border-radius:18px;
+}
+#home .quick{
+  margin-top:8px;
+  gap:9px;
+}
+#home .quick button{
+  min-height:52px;
+  border-radius:20px;
+}
+.manual-stack{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+/* product-level MCP label: keep original background and card layout clean */
+.product-control-title span{
+  color:var(--green);
+}
+.product-mcp-note{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:11px 12px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:20px;
+  background:rgba(255,255,255,.045);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12);
+}
+.product-mcp-note .mcp-badge{
+  width:48px;
+  height:48px;
+  border-radius:17px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+  color:#06100b;
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  font-size:13px;
+  font-weight:950;
+  letter-spacing:.08em;
+}
+.product-mcp-note strong{
+  display:block;
+  font-size:14px;
+}
+.product-mcp-note span{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+}
+.product-device-meta{
+  margin-top:8px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.35;
+}
+#control .manual-grid{
+  gap:10px;
+}
+#control .mini-panel{
+  min-height:136px;
+}
+
+/* clean product MCP controls: compact label, no background override */
+.pc-agent-task-card{
+  grid-column:1 / -1;
+  min-height:0!important;
+}
+.pc-agent-task-card .pc-chat{
+  margin-top:10px;
+  max-height:132px;
+  overflow:auto;
+  padding-right:2px;
+}
+.pc-agent-task-card .pc-chat .bubble{
+  max-width:100%;
+  font-size:12px;
+}
+.pc-agent-task-card .pc-command{
+  margin-top:10px;
+}
+.pc-agent-task-card .pc-command input{
+  height:46px;
+}
+.product-mcp-layer{
+  padding:12px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:22px;
+  background:rgba(255,255,255,.042);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10);
+}
+.product-mcp-layer .mini-title{
+  justify-content:space-between;
+}
+.product-mcp-layer .mini-title b{
+  color:var(--green);
+  font-size:11px;
+}
+.mcp-service-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:8px;
+  margin-top:10px;
+}
+.mcp-service{
+  min-height:74px;
+  padding:10px 8px;
+  border:1px solid rgba(255,255,255,.115);
+  border-radius:18px;
+  background:rgba(255,255,255,.043);
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+}
+.mcp-service i{
+  width:16px;
+  height:16px;
+  color:var(--green);
+}
+.mcp-service strong{
+  display:block;
+  margin-top:7px;
+  font-size:12px;
+}
+.mcp-service span{
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.25;
+}
+
+/* MCP user-owned service configuration */
+.mcp-service em{
+  align-self:flex-start;
+  margin-top:8px;
+  padding:3px 7px;
+  border-radius:999px;
+  border:1px solid rgba(105,229,193,.22);
+  color:var(--green);
+  background:rgba(105,229,193,.08);
+  font-size:9px;
+  font-style:normal;
+  font-weight:900;
+}
+.mcp-config-panel{
+  margin-top:10px;
+  padding:11px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:20px;
+  background:rgba(255,255,255,.04);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.mcp-config-grid{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.mcp-config-field{
+  display:grid;
+  gap:5px;
+}
+.mcp-config-field span{
+  color:var(--muted);
+  font-size:10px;
+  font-weight:850;
+}
+.mcp-config-field input{
+  width:100%;
+  height:38px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  background:rgba(255,255,255,.052);
+  color:var(--text);
+  padding:0 10px;
+  outline:none;
+  font-size:12px;
+}
+.mcp-config-save{
+  width:100%;
+  height:40px;
+  margin-top:10px;
+  border:0;
+  border-radius:16px;
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  color:var(--ink);
+  font-weight:950;
+}
+.manual-panel input[type=range],
+.mini-panel input[type=range]{
+  margin:12px 0 8px;
+}
+.led-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  color:var(--muted);
+  font-size:11px;
+}
+.led-row b{
+  color:var(--green);
+  font-size:12px;
+}
+.led-slider{
+  accent-color:var(--amber);
+}
+.manual-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.manual-head strong{
+  display:block;
+  font-size:14px;
+}
+.manual-head span{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:11px;
+}
+.manual-head b{
+  color:var(--green);
+  font-size:13px;
+  white-space:nowrap;
+}
+.manual-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+.mini-panel{
+  min-height:128px;
+}
+.mini-title{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  color:var(--muted);
+  font-size:11px;
+}
+.mini-title i{
+  width:16px;
+  height:16px;
+}
+.mini-panel>strong{
+  display:block;
+  margin-top:12px;
+  font-size:24px;
+  line-height:1;
+}
+.segmented{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:6px;
+  margin-top:10px;
+}
+.segmented.compact{
+  grid-template-columns:repeat(2,1fr);
+}
+.segmented.compact button:nth-child(3){
+  grid-column:auto;
+}
+.segmented button{
+  min-height:36px;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:16px;
+  background:rgba(255,255,255,.075);
+  color:var(--text);
+  font-size:12px;
+  font-weight:850;
+}
+.segmented button.on{
+  color:#07110f;
+  background:linear-gradient(135deg,#8cf0d0,#82e7ff);
+  border-color:rgba(130,231,255,.5);
+}
+.task-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top:12px;
+}
+.task-list button{
+  min-height:44px;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:18px;
+  background:rgba(255,255,255,.075);
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:9px;
+  padding:0 12px;
+  font-weight:850;
+}
+.task-list i{
+  width:17px;
+  height:17px;
+  color:var(--blue);
+}
+.pc-chat{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top:12px;
+}
+.pc-chat .bubble{
+  max-width:100%;
+  font-size:12px;
+}
+.pc-command{
+  margin-top:10px;
+}
+.pc-command input{
+  height:48px;
+}
+.pc-command .send-btn{
+  border-radius:20px;
+}
+.settings-stack{
+  display:grid;
+  gap:12px;
+}
+.settings-panel{
+  display:grid;
+  gap:12px;
+}
+.setting-field{
+  display:grid;
+  gap:7px;
+}
+.setting-field label,
+.setting-row span{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:800;
+}
+.setting-field input,
+.setting-field select,
+.setting-field textarea{
+  width:100%;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:16px;
+  background:rgba(255,255,255,.07);
+  color:var(--text);
+  padding:12px;
+  outline:none;
+}
+.setting-field select option{
+  color:#111;
+}
+.setting-field textarea{
+  min-height:112px;
+  resize:vertical;
+  line-height:1.55;
+}
+.setting-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+.setting-row{
+  min-height:52px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:16px;
+  background:rgba(255,255,255,.055);
+}
+.setting-row strong{
+  display:block;
+  font-size:14px;
+}
+.switch{
+  position:relative;
+  width:48px;
+  height:28px;
+  flex:0 0 auto;
+}
+.switch input{
+  opacity:0;
+  width:0;
+  height:0;
+}
+.switch b{
+  position:absolute;
+  inset:0;
+  border-radius:999px;
+  background:rgba(255,255,255,.16);
+  transition:.2s;
+}
+.switch b::after{
+  content:"";
+  position:absolute;
+  width:22px;
+  height:22px;
+  left:3px;
+  top:3px;
+  border-radius:50%;
+  background:#fff;
+  transition:.2s;
+}
+.switch input:checked + b{
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+}
+.switch input:checked + b::after{
+  transform:translateX(20px);
+}
+.settings-save{
+  height:48px;
+  border:0;
+  border-radius:18px;
+  background:linear-gradient(135deg,var(--green),#8be7ff);
+  color:var(--ink);
+  font-weight:950;
+}
+@media (max-height:760px){
+  #home .scene{min-height:224px}
+  #home .insight span{display:none}
+  #home .quick button{min-height:50px}
+}
+@media (min-width:700px){
+  body{align-items:flex-start}
+  .app{
+    margin:20px 0 110px;
+    min-height:844px;
+    height:auto;
+    border:1px solid var(--line);
+    border-radius:32px;
+  }
+  .tabbar{
+    bottom:20px;
+    border-left:1px solid rgba(255,255,255,.16);
+    border-right:1px solid rgba(255,255,255,.16);
+  }
+}
+
+/* visible-character global background fix: keep anime image global, no local hard mask/crop */
+.app{
+  background:
+    radial-gradient(circle at 18% 52%,rgba(255,181,150,.20),transparent 23%),
+    radial-gradient(circle at 82% 18%,rgba(130,231,255,.10),transparent 30%),
+    linear-gradient(180deg,#090b13 0%,#070910 45%,#09080d 100%);
+}
+.app::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  background:var(--app-bg-photo) left bottom/138% auto no-repeat;
+  opacity:.98;
+  filter:brightness(1.34) contrast(1.08) saturate(1.12);
+  transform:none;
+}
+.app::after{
+  z-index:1;
+  background:
+    radial-gradient(circle at 19% 58%,rgba(255,198,166,.16),transparent 28%),
+    linear-gradient(180deg,rgba(4,6,10,.02),rgba(4,6,10,.04) 30%,rgba(4,6,10,.13) 100%),
+    linear-gradient(90deg,rgba(4,6,10,0),rgba(4,6,10,.03) 44%,rgba(4,6,10,.13) 100%);
+}
+.screen{
+  z-index:2;
+}
+#home .scene,
+.scene{
+  min-height:190px;
+  border-color:rgba(255,255,255,.22);
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.012)),
+    rgba(8,11,17,.18);
+  backdrop-filter:blur(2px) saturate(1.04);
+  -webkit-backdrop-filter:blur(2px) saturate(1.04);
+  box-shadow:
+    0 14px 36px rgba(0,0,0,.16),
+    inset 0 1px 0 rgba(255,255,255,.14),
+    inset 0 -42px 72px rgba(5,7,12,.22);
+}
+.scene::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  background:
+    linear-gradient(180deg,rgba(5,7,12,.08),rgba(5,7,12,.34)),
+    radial-gradient(circle at 78% 46%,rgba(255,214,160,.18),transparent 25%),
+    var(--room-photo) center 38%/cover no-repeat;
+  opacity:.38;
+}
+.scene::before{
+  z-index:2;
+  width:72%;
+  height:72%;
+  background:linear-gradient(140deg,rgba(4,6,10,.64),rgba(4,6,10,.28) 54%,transparent);
+}
+.scene-head,
+.live-badge{
+  position:relative;
+  z-index:3;
+}
+.live-badge,
+.mode-chip,
+.status-pill{
+  background:rgba(13,17,26,.34);
+  backdrop-filter:blur(8px) saturate(1.05);
+  -webkit-backdrop-filter:blur(8px) saturate(1.05);
+}
+.insight,
+.control,
+.metric,
+.feed-item,
+.bubble,
+.control-panel{
+  border-color:rgba(255,255,255,.24);
+  background:rgba(255,255,255,.026);
+  backdrop-filter:blur(2px) saturate(1.02);
+  -webkit-backdrop-filter:blur(2px) saturate(1.02);
+  box-shadow:
+    0 5px 14px rgba(0,0,0,.045),
+    inset 0 1px 0 rgba(255,255,255,.22);
+}
+#home .insight{
+  background:
+    linear-gradient(135deg,rgba(140,240,208,.045),rgba(130,231,255,.018) 52%,rgba(255,216,111,.018)),
+    rgba(255,255,255,.024);
+}
+#home .control{
+  margin-top:9px;
+  padding:11px 11px 12px;
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.034),rgba(255,255,255,.006)),
+    rgba(255,255,255,.018);
+}
+#home .control-main{
+  grid-template-columns:116px 1fr;
+  gap:12px;
+}
+#home .dial{
+  width:116px;
+}
+.dial::before{
+  background:rgba(5,8,11,.74);
+}
+.round-btn,
+.quick button,
+.button-grid button{
+  border-color:rgba(255,255,255,.24);
+  background:rgba(255,255,255,.024);
+  backdrop-filter:blur(2px) saturate(1.02);
+  -webkit-backdrop-filter:blur(2px) saturate(1.02);
+}
+#home .quick{
+  margin-top:9px;
+  gap:9px;
+}
+#home .quick button{
+  min-height:56px;
+  border-radius:20px;
+  font-size:12px;
+}
+.quick button.primary,
+.button-grid button.primary{
+  background:
+    linear-gradient(135deg,rgba(140,240,208,.14),rgba(130,231,255,.08)),
+    rgba(255,255,255,.026);
+}
+.tabbar{
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.034),rgba(255,255,255,.006)),
+    rgba(255,255,255,.022);
+  backdrop-filter:blur(2px) saturate(1.02);
+  -webkit-backdrop-filter:blur(2px) saturate(1.02);
+  border-color:rgba(255,255,255,.22);
+}
+@media (max-height:760px){
+  #home .scene{min-height:178px}
+  #home .control-main{grid-template-columns:108px 1fr}
+  #home .dial{width:108px}
+  #home .quick button{min-height:54px}
+}
+
+
+/* remaining-task optimization: real-data UI, compact settings, calibration summary */
+#settings .section{margin-top:8px}
+#settings .settings-stack{gap:7px}
+#settings .panel-title{margin-bottom:6px}
+#settings .panel-title h2{font-size:14px}
+#settings .settings-panel{gap:7px;padding:9px 10px;border-radius:18px}
+#settings .manual-head{align-items:center;gap:8px}
+#settings .manual-head span{display:none}
+#settings .manual-head strong{font-size:13px}
+#settings .manual-head b{font-size:11px}
+#settings .setting-grid{gap:7px}
+#settings .setting-field{gap:4px}
+#settings .setting-field label{font-size:10px}
+#settings .setting-field input,
+#settings .setting-field select,
+#settings .setting-field textarea{height:34px;min-height:34px;padding:7px 9px;border-radius:12px;font-size:12px;background:rgba(255,255,255,.055)}
+#settings #settingDescription{height:42px;min-height:42px;resize:none}
+#settings #memoryText{height:56px;min-height:56px;resize:none}
+#settings .setting-row{min-height:38px;padding:7px 9px;border-radius:13px}
+#settings .setting-row strong{font-size:12px}
+#settings .setting-row span{display:none}
+#settings .switch{width:42px;height:24px}
+#settings .switch b::after{width:18px;height:18px}
+#settings .switch input:checked + b::after{transform:translateX(18px)}
+#settings .settings-save{height:38px;border-radius:14px}
+.calibration-summary{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.calibration-summary>div{border:1px solid rgba(255,255,255,.12);border-radius:13px;background:rgba(255,255,255,.045);padding:8px 9px}
+.calibration-summary span{display:block;color:var(--muted);font-size:10px;font-weight:800}
+.calibration-summary strong{display:block;margin-top:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#status .section{margin-top:10px}
+#status .metric{min-height:74px;padding:10px 11px}
+#status .metric .num{font-size:25px;margin-top:7px}
+#status .feed{gap:8px}
+#status .feed-item{min-height:58px;padding:10px 11px}
+#status .feed-item span{font-size:11px}
+#home .control-copy .label{color:rgba(250,246,238,.76)}
+#home .quick button{white-space:nowrap}
+
+
+
+/* task2 cleanup: remove clutter, compact settings, status wave charts */
+#settings{position:relative;min-height:calc(100vh - 120px)}
+#settings::before{content:"";position:absolute;z-index:-1;left:-16px;right:-16px;top:-86px;height:210px;background:linear-gradient(180deg,rgba(62,84,150,.32),rgba(62,84,150,.08) 58%,transparent),radial-gradient(circle at 20% 20%,rgba(130,231,255,.16),transparent 38%);pointer-events:none}
+#settings .settings-stack{gap:8px;margin-top:6px}
+#settings .settings-panel{padding:10px 10px;border-radius:18px;gap:8px}
+#settings .setting-row{min-height:36px;padding:7px 9px}
+#settings .setting-field input,#settings .setting-field select,#settings .setting-field textarea{height:32px;min-height:32px}
+#settings #settingDescription{height:38px;min-height:38px}
+#settings .settings-save-compact{width:100%;margin-top:0;height:40px;border-radius:16px}
+#home .scene-title p{display:none!important}
+#home .scene-title h1{max-width:230px}
+#home .scene{min-height:186px}
+#home .live-badge{bottom:16px}
+#control .manual-stack{gap:10px;margin-top:12px}
+#control .manual-grid{grid-template-columns:1fr 1fr}
+#control .pc-agent-panel{display:none!important}
+.status-feed-lite{margin-top:10px}
+.status-feed-lite .feed-item{min-height:56px}
+.wave-stack{display:grid;gap:9px;margin-top:10px}
+.wave-card{border:1px solid rgba(255,255,255,.24);border-radius:22px;background:rgba(255,255,255,.026);backdrop-filter:blur(2px) saturate(1.02);-webkit-backdrop-filter:blur(2px) saturate(1.02);box-shadow:0 5px 14px rgba(0,0,0,.045),inset 0 1px 0 rgba(255,255,255,.22);padding:10px 11px 8px;overflow:hidden}
+.wave-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
+.wave-head strong{font-size:13px}
+.wave-head span{font-size:11px;color:var(--muted);white-space:nowrap}
+.wave-card canvas{width:100%;height:58px;display:block}
+@media (max-height:760px){#home .scene{min-height:168px}.wave-card{padding:8px 10px 6px}.wave-card canvas{height:48px}#status .metric{min-height:62px}}
+
+
+
+/* task2 overlap hotfix: keep scene status chip at bottom, not in text flow */
+#home .scene{min-height:198px}
+#home .scene-head{position:relative;z-index:4;align-items:flex-start}
+#home .scene-title{max-width:230px;padding-right:6px}
+#home .scene-title h1{font-size:22px;line-height:1.16;max-width:210px;margin:0;text-wrap:balance}
+#home .live-badge{position:absolute!important;left:18px;bottom:16px;z-index:5;margin:0;max-width:180px;white-space:nowrap}
+@media (max-height:760px){#home .scene{min-height:188px}#home .scene-title h1{font-size:21px;max-width:205px}#home .live-badge{bottom:14px}}
+
+
+
+/* task3 restore key settings and symmetric control grid */
+#settings .settings-stack{gap:11px;margin-top:8px}
+#settings .settings-panel{padding:13px 14px;border-radius:22px;gap:10px}
+#settings .manual-head strong{font-size:14px}
+#settings .manual-head span{display:block;font-size:10px;margin-top:3px;color:var(--muted)}
+#settings .setting-row{min-height:48px;padding:10px 11px;border-radius:16px}
+#settings .setting-row strong{font-size:13px}
+#settings .setting-row span{display:block;font-size:10px;margin-top:3px;color:var(--muted);line-height:1.35}
+#settings .setting-field input,#settings .setting-field select,#settings .setting-field textarea{height:40px;min-height:40px;padding:9px 10px;border-radius:14px;font-size:13px}
+#settings #settingDescription{height:58px;min-height:58px;line-height:1.4}
+#settings .switch{width:46px;height:26px}
+#settings .switch b::after{width:20px;height:20px}
+#settings .switch input:checked + b::after{transform:translateX(20px)}
+#settings .settings-save-compact{height:44px;border-radius:17px;margin-bottom:4px}
+#control .manual-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}
+#control .mini-panel{min-height:136px;display:grid;align-content:space-between}
+#control .pc-agent-panel{display:grid!important}
+#control .pc-agent-panel .mini-title i{color:var(--blue)}
+
+
+/* settings top background unify fix */
+#settings::before{display:none!important}
+.app.settings-active::before{
+  background:var(--app-bg-photo) left 44%/138% auto no-repeat;
+  opacity:.98;
+}
+.app.settings-active::after{
+  background:
+    radial-gradient(circle at 20% 18%,rgba(130,231,255,.13),transparent 28%),
+    radial-gradient(circle at 25% 72%,rgba(255,198,166,.16),transparent 28%),
+    linear-gradient(180deg,rgba(4,6,10,.06),rgba(4,6,10,.08) 34%,rgba(4,6,10,.18) 100%),
+    linear-gradient(90deg,rgba(4,6,10,.02),rgba(4,6,10,.03) 48%,rgba(4,6,10,.12) 100%);
+}
+.app.settings-active .topbar{
+  background:linear-gradient(180deg,rgba(255,255,255,.018),rgba(255,255,255,0));
+}
+.app.settings-active #settings .panel-title{
+  padding:8px 2px 6px;
+  border-radius:18px;
+}
+
+/* settings top final unify */
+.app.settings-active::before{
+  background:var(--app-bg-photo) left bottom/138% auto no-repeat!important;
+  opacity:.98!important;
+  filter:brightness(1.34) contrast(1.08) saturate(1.12)!important;
+}
+.app.settings-active::after{
+  background:
+    radial-gradient(circle at 19% 58%,rgba(255,198,166,.16),transparent 28%),
+    linear-gradient(180deg,rgba(4,6,10,.02),rgba(4,6,10,.04) 30%,rgba(4,6,10,.13) 100%),
+    linear-gradient(90deg,rgba(4,6,10,0),rgba(4,6,10,.03) 44%,rgba(4,6,10,.13) 100%)!important;
+}
+.app.settings-active .topbar,
+.app.settings-active #settings .panel-title{
+  background:transparent!important;
+  padding:0!important;
+  border-radius:0!important;
+}
+
+/* settings title/card separation fix */
+#settings .settings-stack{padding-top:10px!important}
+#settings .panel-title{margin-bottom:16px!important}
+#settings .settings-panel:first-of-type{margin-top:2px!important}
+
+/* settings black top hard fix */
+.app.settings-active{
+  background:
+    radial-gradient(circle at 20% 10%,rgba(130,231,255,.18),transparent 30%),
+    radial-gradient(circle at 50% 34%,rgba(184,168,255,.20),transparent 36%),
+    radial-gradient(circle at 20% 72%,rgba(255,198,166,.16),transparent 28%),
+    linear-gradient(180deg,#18223b 0%,#22284b 28%,#171c35 56%,#09080d 100%)!important;
+}
+.app.settings-active::before{
+  background:var(--app-bg-photo) left 30%/138% auto no-repeat!important;
+  opacity:.92!important;
+  filter:brightness(1.45) contrast(1.04) saturate(1.12)!important;
+}
+.app.settings-active::after{
+  background:
+    linear-gradient(180deg,rgba(18,28,55,.10),rgba(18,28,55,.04) 36%,rgba(4,6,10,.14) 100%),
+    linear-gradient(90deg,rgba(4,6,10,.01),rgba(4,6,10,.03) 54%,rgba(4,6,10,.10) 100%)!important;
+}
+#settings .settings-stack{
+  padding-top:0!important;
+  margin-top:0!important;
+}
+#settings .panel-title{
+  margin-bottom:8px!important;
+}
+#settings .settings-panel:first-of-type{
+  margin-top:0!important;
+}
+
+/* settings full-height no black bottom fix */
+.app.settings-active{
+  background:
+    var(--app-bg-photo) left bottom/138% auto no-repeat,
+    radial-gradient(circle at 20% 10%,rgba(130,231,255,.18),transparent 30%),
+    radial-gradient(circle at 50% 34%,rgba(184,168,255,.20),transparent 36%),
+    radial-gradient(circle at 20% 72%,rgba(255,198,166,.16),transparent 28%),
+    linear-gradient(180deg,#18223b 0%,#22284b 28%,#171c35 56%,#151735 100%)!important;
+}
+.app.settings-active::before{
+  background:var(--app-bg-photo) left bottom/138% auto no-repeat!important;
+  opacity:.62!important;
+  filter:brightness(1.35) contrast(1.04) saturate(1.1)!important;
+}
+.app.settings-active::after{
+  background:
+    linear-gradient(180deg,rgba(18,28,55,.08),rgba(18,28,55,.03) 36%,rgba(18,20,48,.16) 100%),
+    linear-gradient(90deg,rgba(4,6,10,.01),rgba(4,6,10,.03) 54%,rgba(4,6,10,.10) 100%)!important;
+}
+.app.settings-active .screen{
+  background:transparent!important;
+}
+.app.settings-active #settings{
+  background:transparent!important;
+  min-height:calc(100vh - 190px)!important;
+  padding-bottom:120px!important;
+}
+.app.settings-active .tabbar{
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.008)),
+    rgba(28,32,62,.42)!important;
+}
+
+/* home pressure dial full green ring fix */
+#home .dial,
+.dial{
+  background:
+    conic-gradient(from -90deg,
+      rgba(140,240,208,.98) 0deg,
+      rgba(130,231,255,.96) 150deg,
+      rgba(140,240,208,.98) 300deg,
+      rgba(140,240,208,.98) 360deg
+    )!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.16),
+    0 18px 42px rgba(130,231,255,.16)!important;
+}
+#home .dial::before,
+.dial::before{
+  background:rgba(5,8,11,.82)!important;
+  border-color:rgba(255,255,255,.14)!important;
+}
+
+/* control page background + product MCP polish */
+.app.control-active{
+  background:
+    linear-gradient(180deg,rgba(6,8,14,.10),rgba(7,9,14,.24) 42%,rgba(7,8,12,.44)),
+    radial-gradient(circle at 18% 72%,rgba(255,184,154,.13),transparent 24%),
+    radial-gradient(circle at 82% 24%,rgba(130,231,255,.12),transparent 28%),
+    var(--app-bg-photo,var(--room-photo)) left bottom/138% auto no-repeat,
+    linear-gradient(180deg,#090b13,#07080c 54%,#09070c);
+}
+.app.control-active::before{
+  background:var(--app-bg-photo,var(--room-photo)) left bottom/138% auto no-repeat!important;
+  opacity:.42!important;
+}
+.app.control-active::after{
+  background:
+    linear-gradient(180deg,rgba(5,7,12,.02),rgba(5,7,12,.08) 18%,rgba(5,7,12,.18) 54%,rgba(4,5,10,.28)),
+    linear-gradient(90deg,rgba(5,7,12,.05),rgba(5,7,12,.02) 28%,rgba(5,7,12,.10) 100%)!important;
+}
+.app.control-active .topbar,
+.app.control-active #control .panel-title{
+  background:transparent!important;
+}
+.mcp-device-badge{
+  margin-left:auto;
+  padding:3px 7px;
+  border-radius:999px;
+  border:1px solid rgba(140,240,208,.24);
+  color:var(--green);
+  background:rgba(140,240,208,.08);
+  font-size:9px;
+  font-weight:950;
+  letter-spacing:.06em;
+}
+#control .control-panel{
+  background:rgba(255,255,255,.048);
+}
+#control .pc-agent-task-card,
+#control .product-mcp-layer,
+#control .product-mcp-note{
+  background:rgba(255,255,255,.045);
+}
+#control .mcp-service,
+#control .mcp-config-panel{
+  background:rgba(255,255,255,.04);
+}
+
+
+/* final override: keep the control page from falling back to a black top area */
+.app.control-active{
+  background:
+    linear-gradient(180deg,rgba(18,22,44,.18),rgba(20,22,48,.22) 32%,rgba(9,10,20,.42)),
+    radial-gradient(circle at 22% 18%,rgba(130,231,255,.12),transparent 30%),
+    radial-gradient(circle at 75% 36%,rgba(255,184,154,.10),transparent 28%),
+    var(--app-bg-photo,var(--room-photo)) center top/cover no-repeat,
+    linear-gradient(180deg,#15172b,#101223 60%,#09070c)!important;
+}
+.app.control-active::before{
+  background:var(--app-bg-photo,var(--room-photo)) center top/cover no-repeat!important;
+  opacity:.36!important;
+}
+.app.control-active::after{
+  background:linear-gradient(180deg,rgba(6,8,18,.08),rgba(6,8,18,.10) 20%,rgba(4,5,12,.22) 100%)!important;
+}
+
+
+/* home page device controls */
+.home-device-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+  margin-top:10px;
+}
+.home-device-card{
+  min-height:126px!important;
+  padding:12px 13px!important;
+  display:grid;
+  align-content:space-between;
+  background:rgba(255,255,255,.052)!important;
+}
+.home-device-card .mini-title{
+  min-width:0;
+}
+.home-device-card .mini-title span{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.home-device-card>strong{
+  margin-top:8px!important;
+  font-size:25px!important;
+}
+.home-device-card .product-device-meta{
+  margin-top:5px;
+  font-size:10px;
+}
+.home-device-card .segmented{
+  margin-top:8px;
+}
+.home-device-card .segmented button{
+  min-height:34px;
+}
+.home-device-card .led-slider{
+  margin:7px 0 5px!important;
+}
+.home-device-card .led-row{
+  font-size:10px;
+}
+@media (max-height:820px){
+  .home-device-card{min-height:116px!important;padding:10px 12px!important}
+  .home-device-card>strong{font-size:23px!important}
+  .home-device-card .product-device-meta{display:none}
+  .home-device-card .segmented button{min-height:32px}
+}
+
+
+/* compact the four home device cards so they sit under the first page controls */
+#home .home-device-grid{gap:8px;margin-top:8px}
+#home .home-device-card{height:108px!important;min-height:108px!important;padding:8px 11px!important;overflow:hidden}
+#home .home-device-card .mini-title{font-size:10px;gap:5px}
+#home .home-device-card .mini-title i{width:14px;height:14px}
+#home .home-device-card .mcp-device-badge{font-size:8px;padding:2px 6px}
+#home .home-device-card>strong{font-size:21px!important;margin-top:3px!important}
+#home .home-device-card .product-device-meta{display:none}
+#home .home-device-card .segmented{margin-top:5px;gap:5px}
+#home .home-device-card .segmented button{min-height:29px;border-radius:14px;font-size:11px}
+#home .home-device-card .led-slider{margin:2px 0 2px!important;height:12px}
+#home .home-device-card .led-row{font-size:9px;line-height:1}
+#home .home-device-card .led-row b{font-size:10px}
+
+
+/* final home one-screen layout: four device cards fit above bottom nav */
+#home{
+  overflow:hidden!important;
+}
+#home .scene{
+  height:142px!important;
+  min-height:142px!important;
+  border-radius:24px!important;
+}
+#home .scene-head{
+  padding:12px 14px 0!important;
+}
+#home .scene-title h1{
+  font-size:20px!important;
+  line-height:1.12!important;
+  max-width:205px!important;
+}
+#home .mode-chip{
+  transform:scale(.88);
+  transform-origin:right top;
+}
+#home .live-badge{
+  left:16px!important;
+  bottom:11px!important;
+  height:36px!important;
+  padding:0 12px!important;
+  font-size:11px!important;
+}
+#home .insight{
+  margin-top:7px!important;
+  min-height:48px!important;
+  padding:9px 10px!important;
+  border-radius:20px!important;
+}
+#home .insight i{
+  width:22px!important;
+  height:22px!important;
+}
+#home .insight strong{
+  font-size:13px!important;
+}
+#home .insight span{
+  font-size:11px!important;
+  line-height:1.25!important;
+  margin-top:2px!important;
+}
+#home .control{
+  margin-top:7px!important;
+  height:132px!important;
+  min-height:132px!important;
+  padding:9px 10px!important;
+  border-radius:22px!important;
+}
+#home .control-main{
+  grid-template-columns:82px 1fr!important;
+  gap:10px!important;
+}
+#home .dial{
+  width:82px!important;
+}
+#home .dial::before{
+  inset:7px!important;
+}
+#home .dial-value strong{
+  font-size:24px!important;
+}
+#home .dial-value span{
+  font-size:9px!important;
+  margin-top:2px!important;
+}
+#home .control-copy .label{
+  font-size:10px!important;
+}
+#home .control-copy h2{
+  margin:3px 0 0!important;
+  font-size:16px!important;
+  line-height:1.15!important;
+}
+#home .range-row{
+  margin-top:8px!important;
+  grid-template-columns:34px 1fr 34px!important;
+  gap:9px!important;
+}
+#home .round-btn{
+  height:34px!important;
+  border-radius:16px!important;
+}
+#home .quick{
+  margin-top:7px!important;
+  gap:7px!important;
+}
+#home .quick button{
+  min-height:42px!important;
+  border-radius:17px!important;
+  font-size:11px!important;
+  padding:0 7px!important;
+}
+#home .quick i{
+  width:16px!important;
+  height:16px!important;
+}
+#home .home-device-grid{
+  gap:7px!important;
+  margin-top:7px!important;
+}
+#home .home-device-card{
+  height:88px!important;
+  min-height:88px!important;
+  padding:7px 10px!important;
+  border-radius:19px!important;
+  overflow:hidden!important;
+}
+#home .home-device-card .mini-title{
+  font-size:10px!important;
+  gap:5px!important;
+}
+#home .home-device-card .mini-title i{
+  width:14px!important;
+  height:14px!important;
+}
+#home .home-device-card .mcp-device-badge{
+  font-size:8px!important;
+  padding:2px 6px!important;
+}
+#home .home-device-card>strong{
+  font-size:20px!important;
+  margin-top:1px!important;
+  line-height:1!important;
+}
+#home .home-device-card .product-device-meta{
+  display:none!important;
+}
+#home .home-device-card .segmented{
+  margin-top:4px!important;
+  gap:5px!important;
+}
+#home .home-device-card .segmented button{
+  min-height:26px!important;
+  border-radius:13px!important;
+  font-size:11px!important;
+}
+#home .home-device-card .led-slider{
+  margin:0!important;
+  height:10px!important;
+}
+#home .home-device-card .led-row{
+  font-size:9px!important;
+  line-height:1!important;
+}
+#home .home-device-card .led-row b{
+  font-size:10px!important;
+}
+@media (max-height:850px){
+  #home .scene{height:126px!important;min-height:126px!important}
+  #home .insight{min-height:42px!important;padding:8px 10px!important}
+  #home .insight span{display:none!important}
+  #home .control{height:120px!important;min-height:120px!important}
+  #home .quick button{min-height:38px!important}
+  #home .home-device-card{height:80px!important;min-height:80px!important}
+  #home .home-device-card>strong{font-size:18px!important}
+  #home .home-device-card .segmented button{min-height:24px!important}
+}
+
+
+/* balanced home first-screen layout: roomy but no vertical scroll */
+#home{
+  overflow:hidden!important;
+}
+#home .scene{
+  height:clamp(148px,17.5dvh,166px)!important;
+  min-height:clamp(148px,17.5dvh,166px)!important;
+  border-radius:26px!important;
+}
+#home .scene-head{
+  padding:14px 15px 0!important;
+}
+#home .scene-title h1{
+  font-size:clamp(21px,2.55dvh,24px)!important;
+  line-height:1.12!important;
+  max-width:230px!important;
+}
+#home .mode-chip{
+  transform:scale(.94)!important;
+  transform-origin:right top!important;
+}
+#home .live-badge{
+  bottom:15px!important;
+  transform:scale(.96)!important;
+  transform-origin:left bottom!important;
+}
+#home .insight{
+  min-height:46px!important;
+  margin-top:8px!important;
+  padding:10px 12px!important;
+  border-radius:22px!important;
+}
+#home .insight strong{
+  font-size:13px!important;
+}
+#home .insight span{
+  display:block!important;
+  font-size:11px!important;
+  line-height:1.22!important;
+}
+#home .control{
+  height:clamp(140px,17dvh,158px)!important;
+  min-height:clamp(140px,17dvh,158px)!important;
+  margin-top:8px!important;
+  padding:11px 12px!important;
+  border-radius:24px!important;
+}
+#home .control-main{
+  grid-template-columns:clamp(92px,11.2dvh,104px) 1fr!important;
+  gap:12px!important;
+}
+#home .dial{
+  width:clamp(92px,11.2dvh,104px)!important;
+}
+#home .dial strong{
+  font-size:clamp(26px,3.45dvh,32px)!important;
+}
+#home .control-copy h2{
+  font-size:clamp(17px,2.15dvh,20px)!important;
+  line-height:1.16!important;
+}
+#home .range-row{
+  margin-top:10px!important;
+  grid-template-columns:36px 1fr 36px!important;
+}
+#home .round-btn{
+  width:36px!important;
+  height:36px!important;
+}
+#home .quick{
+  margin-top:8px!important;
+  gap:8px!important;
+}
+#home .quick button{
+  min-height:clamp(48px,5.8dvh,54px)!important;
+  border-radius:17px!important;
+  font-size:12px!important;
+}
+#home .home-device-grid{
+  gap:8px!important;
+  margin-top:8px!important;
+}
+#home .home-device-card{
+  height:clamp(112px,13dvh,128px)!important;
+  min-height:clamp(112px,13dvh,128px)!important;
+  padding:10px 12px!important;
+  border-radius:22px!important;
+  overflow:hidden!important;
+  align-content:space-between!important;
+}
+#home .home-device-card .mini-title{
+  font-size:11px!important;
+  gap:6px!important;
+}
+#home .home-device-card .mini-title i{
+  width:16px!important;
+  height:16px!important;
+}
+#home .home-device-card .mcp-device-badge{
+  font-size:8px!important;
+  padding:2px 7px!important;
+}
+#home .home-device-card>strong{
+  font-size:clamp(22px,2.8dvh,26px)!important;
+  line-height:1!important;
+  margin-top:4px!important;
+}
+#home .home-device-card .segmented{
+  margin-top:7px!important;
+  gap:6px!important;
+}
+#home .home-device-card .segmented button{
+  min-height:clamp(29px,3.55dvh,33px)!important;
+  border-radius:15px!important;
+  font-size:11px!important;
+}
+#home .home-device-card .product-device-meta{
+  display:none!important;
+}
+#home .home-device-card .led-slider{
+  margin:4px 0 4px!important;
+  height:12px!important;
+}
+#home .home-device-card .led-row{
+  font-size:10px!important;
+  line-height:1.05!important;
+}
+#home .home-device-card .led-row b{
+  font-size:11px!important;
+}
+@media (max-height:820px){
+  #home .scene{height:132px!important;min-height:132px!important}
+  #home .scene-head{padding:12px 14px 0!important}
+  #home .scene-title h1{font-size:20px!important;max-width:210px!important}
+  #home .mode-chip{transform:scale(.88)!important}
+  #home .live-badge{bottom:13px!important;transform:scale(.91)!important}
+  #home .insight{min-height:40px!important;padding:8px 10px!important}
+  #home .insight span{display:none!important}
+  #home .control{height:128px!important;min-height:128px!important;padding:9px 10px!important}
+  #home .control-main{grid-template-columns:88px 1fr!important;gap:10px!important}
+  #home .dial{width:88px!important}
+  #home .dial strong{font-size:26px!important}
+  #home .control-copy h2{font-size:16px!important}
+  #home .range-row{margin-top:8px!important;grid-template-columns:34px 1fr 34px!important}
+  #home .round-btn{width:34px!important;height:34px!important}
+  #home .quick button{min-height:42px!important}
+  #home .home-device-card{height:98px!important;min-height:98px!important;padding:8px 10px!important;border-radius:20px!important}
+  #home .home-device-card>strong{font-size:21px!important}
+  #home .home-device-card .segmented{margin-top:5px!important}
+  #home .home-device-card .segmented button{min-height:27px!important}
+  #home .home-device-card .led-slider{margin:2px 0 2px!important;height:10px!important}
+}
+
+
+/* home viewport lock: first page uses one screen without document scroll */
+.app.home-active{
+  height:100dvh!important;
+  min-height:100dvh!important;
+  overflow:hidden!important;
+}
+.app.home-active .screen{
+  height:100dvh!important;
+  min-height:100dvh!important;
+  padding-bottom:0!important;
+  overflow:hidden!important;
+}
+
+
+/* home led card fit fix: keep lamp controls complete */
+#home .home-device-card.led-panel{
+  position:relative!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-content:initial!important;
+  justify-content:flex-start!important;
+}
+#home .home-device-card.led-panel .mini-title{
+  flex:0 0 auto!important;
+}
+#home .home-device-card.led-panel>strong{
+  flex:0 0 auto!important;
+  font-size:22px!important;
+  line-height:1!important;
+  margin-top:3px!important;
+}
+#home .home-device-card.led-panel .led-slider{
+  flex:0 0 auto!important;
+  margin:2px 0 2px!important;
+  height:10px!important;
+}
+#home .home-device-card.led-panel .led-row{
+  position:absolute!important;
+  right:12px!important;
+  top:47px!important;
+  width:auto!important;
+  gap:0!important;
+  justify-content:flex-end!important;
+  pointer-events:none!important;
+  margin:0!important;
+  line-height:1!important;
+}
+#home .home-device-card.led-panel .led-row span{
+  display:none!important;
+}
+#home .home-device-card.led-panel .led-row b{
+  font-size:11px!important;
+  line-height:1!important;
+}
+#home .home-device-card.led-panel .segmented{
+  flex:0 0 auto!important;
+  margin-top:auto!important;
+}
+#home .home-device-card.led-panel .segmented button{
+  min-height:28px!important;
+}
+@media (max-height:820px){
+  #home .home-device-card.led-panel>strong{font-size:20px!important;margin-top:2px!important}
+  #home .home-device-card.led-panel .led-slider{height:8px!important;margin:1px 0 1px!important}
+  #home .home-device-card.led-panel .led-row{top:42px!important;right:10px!important}
+  #home .home-device-card.led-panel .segmented button{min-height:24px!important}
+}
+
+
+/* AI avatar workshop */
+.avatar-lab{margin-top:12px;overflow:hidden}
+.avatar-lab-body{display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:stretch}
+.avatar-preview{height:166px;border:1px solid rgba(255,255,255,.20);border-radius:22px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.018));display:grid;place-items:center;overflow:hidden;position:relative;color:var(--muted);font-size:12px}
+.avatar-preview img{width:100%;height:100%;object-fit:cover;display:none}
+.avatar-preview.has-image span{display:none}
+.avatar-preview.has-image img{display:block}
+.avatar-workshop{display:flex;flex-direction:column;gap:8px;min-width:0}
+.avatar-workshop textarea{height:76px;resize:none;border:1px solid rgba(255,255,255,.18);border-radius:18px;background:rgba(255,255,255,.045);color:var(--text);padding:11px 12px;font:inherit;font-size:12px;line-height:1.35;outline:none}
+.avatar-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.avatar-actions button{height:38px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.052);color:var(--text);font-weight:800}
+.avatar-actions button.primary{background:linear-gradient(135deg,var(--cyan),var(--green));color:#092126;border:0}
+.avatar-status{min-height:16px;font-size:10px;color:var(--muted);line-height:1.35}
+@media (max-width:380px){.avatar-lab-body{grid-template-columns:104px 1fr;gap:10px}.avatar-preview{height:150px}.avatar-actions button{font-size:11px}}
+
+
+
+/* user fix 2026-07-08: restore previous compact MCP service blocks, keep transparent glass style */
+#control .product-mcp-note{
+  background:linear-gradient(145deg,rgba(105,229,193,.09),rgba(168,183,255,.045))!important;
+  border:1px solid rgba(105,229,193,.18)!important;
+}
+#control .product-mcp-layer{
+  padding:12px!important;
+  border:1px solid rgba(255,255,255,.13)!important;
+  background:rgba(255,255,255,.048)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12)!important;
+}
+#control .mcp-service-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:8px!important;
+  margin-top:8px!important;
+}
+#control .mcp-service{
+  min-height:96px!important;
+  padding:10px!important;
+  border-radius:18px!important;
+  background:rgba(255,255,255,.052)!important;
+  border:1px solid rgba(255,255,255,.14)!important;
+}
+#control .mcp-service i{
+  width:22px!important;
+  height:22px!important;
+  margin-bottom:5px!important;
+}
+#control .mcp-service strong{
+  font-size:14px!important;
+  margin-top:0!important;
+}
+#control .mcp-service span{
+  min-height:24px!important;
+  font-size:10px!important;
+  line-height:1.35!important;
+}
+#control .mcp-service em{
+  margin-top:5px!important;
+  padding:4px 8px!important;
+  font-size:10px!important;
+}
+#control .mcp-config-panel{
+  margin-top:10px!important;
+  padding:10px!important;
+  border-radius:18px!important;
+  max-height:184px!important;
+  overflow:auto!important;
+  background:rgba(255,255,255,.045)!important;
+  border:1px solid rgba(255,255,255,.13)!important;
+}
+#control .mcp-config-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:7px!important;
+}
+#control .mcp-config-field{
+  min-width:0!important;
+  gap:5px!important;
+}
+#control .mcp-config-field span{
+  font-size:10px!important;
+}
+#control .mcp-config-field input{
+  height:32px!important;
+  border-radius:13px!important;
+  font-size:10px!important;
+  opacity:.9!important;
+  min-width:0!important;
+}
+#control .mcp-config-save{
+  height:34px!important;
+  margin-top:8px!important;
+  border-radius:15px!important;
+  font-size:12px!important;
+}
+
+/* user fix 2026-07-08: keep pressure slider buttons inside the card */
+#home .control-copy{
+  min-width:0!important;
+  overflow:hidden!important;
+}
+#home .range-row{
+  width:100%!important;
+  max-width:100%!important;
+  box-sizing:border-box!important;
+  grid-template-columns:32px minmax(0,1fr) 32px!important;
+  gap:6px!important;
+  padding:0 2px!important;
+  margin-top:8px!important;
+  overflow:hidden!important;
+}
+#home .range-row input[type=range]{
+  min-width:0!important;
+  width:100%!important;
+  display:block!important;
+}
+#home .range-row .round-btn{
+  width:32px!important;
+  min-width:32px!important;
+  height:32px!important;
+  border-radius:15px!important;
+}
+@media (max-height:820px){
+  #home .range-row{grid-template-columns:30px minmax(0,1fr) 30px!important;gap:5px!important;margin-top:6px!important;padding:0 1px!important}
+  #home .range-row .round-btn{width:30px!important;min-width:30px!important;height:30px!important;border-radius:14px!important}
+}
+
+
+
+/* user layout update 2026-07-08: service alarm, settings avatar, simplified personality */
+#home .calibration-hint{display:block!important;margin-top:2px!important;color:rgba(235,244,255,.72)!important;font-size:10px!important;line-height:1.25!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#settings .settings-avatar-lab{margin-top:0!important;overflow:hidden!important}
+#settings .settings-avatar-lab .avatar-lab-body{grid-template-columns:104px minmax(0,1fr)!important;gap:10px!important}
+#settings .settings-avatar-lab .avatar-preview{height:142px!important;border-radius:18px!important}
+#settings .settings-avatar-lab .avatar-workshop textarea{height:66px!important;min-height:66px!important;resize:none!important}
+#settings .personality-panel .personality-grid{grid-template-columns:1fr 1fr!important}
+#settings .personality-panel #settingDescription{height:54px!important;min-height:54px!important;resize:none!important}
+#control .service-alarm-panel{margin-top:10px!important;padding:10px!important;border-radius:18px!important;background:rgba(255,255,255,.045)!important;border:1px solid rgba(255,255,255,.13)!important;gap:8px!important}
+#control .service-alarm-panel .manual-head strong{font-size:14px!important}
+#control .service-alarm-panel .manual-head span{font-size:10px!important;color:var(--muted)!important}
+#control .service-alarm-panel .setting-row{min-height:40px!important;padding:8px 9px!important;border-radius:14px!important}
+#control .service-alarm-panel .setting-row strong{font-size:12px!important}
+#control .service-alarm-panel .setting-row span{font-size:10px!important;color:var(--muted)!important}
+#control .service-alarm-panel .setting-grid{grid-template-columns:1fr 1fr!important;gap:7px!important}
+#control .service-alarm-panel .setting-field{gap:4px!important}
+#control .service-alarm-panel .setting-field label{font-size:10px!important;color:var(--muted)!important}
+#control .service-alarm-panel .setting-field input,#control .service-alarm-panel .setting-field select{height:34px!important;min-height:34px!important;padding:7px 9px!important;border-radius:13px!important;font-size:12px!important;background:rgba(255,255,255,.052)!important}
+#control .service-alarm-save{height:36px!important;margin-top:0!important;border-radius:15px!important;font-size:12px!important}
+#control .mcp-config-panel{max-height:150px!important}
+
+
+
+/* user polish 2026-07-08: PC Agent copy + title position */
+#control .pc-agent-task-card>strong{
+  display:block!important;
+  margin-top:12px!important;
+  margin-bottom:6px!important;
+}
+#control .pc-agent-task-card .pc-chat{
+  margin-top:8px!important;
+}
+
+
+/* user fix 2026-07-08: MCP cards open one configuration panel on demand */
+#control .mcp-service{
+  cursor:pointer!important;
+  transition:border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease!important;
+}
+#control .mcp-service:hover,
+#control .mcp-service.is-active{
+  border-color:rgba(105,229,193,.42)!important;
+  background:linear-gradient(145deg,rgba(105,229,193,.10),rgba(255,255,255,.048))!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 8px 18px rgba(0,0,0,.08)!important;
+}
+#control .mcp-service:active{transform:scale(.985)!important}
+#control .mcp-service:focus-visible{
+  outline:2px solid rgba(105,229,193,.72)!important;
+  outline-offset:2px!important;
+}
+#control .service-alarm-panel:not(.is-open),
+#control .mcp-config-panel:not(.is-open){
+  display:none!important;
+}
+#control .service-alarm-panel.is-open{
+  display:grid!important;
+}
+#control .mcp-config-panel.is-open{
+  display:block!important;
+  animation:mcpPanelIn .16s ease-out both;
+}
+#control .mcp-config-panel.is-open .mcp-config-grid{
+  grid-template-columns:1fr!important;
+}
+#control .mcp-config-field{
+  display:none!important;
+}
+#control .mcp-config-field.is-active{
+  display:grid!important;
+}
+#control .mcp-service em.good{
+  border-color:rgba(105,229,193,.32)!important;
+  background:rgba(105,229,193,.11)!important;
+}
+@keyframes mcpPanelIn{
+  from{opacity:0;transform:translateY(-4px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+
+/* user fix 2026-07-09: compact home/control pressure slider so it stays inside the card */
+#home .control{
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+}
+#home .range-row{
+  width:calc(100% - 12px)!important;
+  max-width:calc(100% - 12px)!important;
+  margin:5px auto 0!important;
+  padding:0 4px!important;
+  box-sizing:border-box!important;
+  grid-template-columns:28px minmax(0,1fr) 28px!important;
+  gap:7px!important;
+  align-items:center!important;
+  overflow:visible!important;
+}
+#home .range-row .round-btn{
+  width:28px!important;
+  min-width:28px!important;
+  height:28px!important;
+  min-height:28px!important;
+  border-radius:50%!important;
+}
+#home .range-row .round-btn svg{
+  width:17px!important;
+  height:17px!important;
+  stroke-width:2.8!important;
+}
+#home .range-row input[type=range]{
+  min-width:0!important;
+  width:100%!important;
+  height:22px!important;
+  display:block!important;
+}
+#home .range-row input[type=range]::-webkit-slider-runnable-track{
+  height:7px!important;
+  border-radius:999px!important;
+}
+#home .range-row input[type=range]::-webkit-slider-thumb{
+  width:24px!important;
+  height:24px!important;
+}
+@media (max-height:820px){
+  #home .range-row{width:calc(100% - 16px)!important;max-width:calc(100% - 16px)!important;grid-template-columns:26px minmax(0,1fr) 26px!important;gap:6px!important;margin-top:4px!important;padding:0 4px!important}
+  #home .range-row .round-btn{width:26px!important;min-width:26px!important;height:26px!important;min-height:26px!important}
+  #home .range-row .round-btn svg{width:15px!important;height:15px!important}
+}
+
+</style>
+</head>
+<body>
+<main class="app home-active">
+  <div class="screen">
+    <header class="topbar">
+      <div class="brand">
+        <strong>小安</strong>
+        <span>远程睡眠中控</span>
+      </div>
+      <div class="top-actions">
+        <div class="status-pill"><span class="dot"></span>家中在线</div>
+        <button class="top-icon-btn" data-open-settings aria-label="设置"><i data-lucide="settings"></i></button>
+      </div>
+    </header>
+
+    <section class="page active" id="home">
+      <div class="scene">
+        <div class="scene-head">
+          <div class="scene-title">
+            <h1 data-home-title>等待主控数据</h1>
+            
+          </div>
+          <div class="mode-chip">
+            <span>当前模式</span>
+            <strong>陪伴</strong>
+          </div>
+        </div>
+        <img class="device" src="./xiaoan-device.png" alt="小安智能枕头">
+        <div class="live-badge" data-pillow-presence><i data-lucide="activity"></i>等待数据</div>
+      </div>
+
+      <div class="insight">
+        <i data-lucide="sparkles"></i>
+        <div>
+          <strong data-home-insight-title>小安判断：等待传感器</strong>
+          <span data-home-insight-detail>收到实时数据后，会显示枕上状态、气压、环境和设备建议。</span>
+        </div>
+      </div>
+
+      <div class="control">
+        <div class="control-main">
+          <div class="dial">
+            <div class="dial-value">
+              <strong data-pressure>3.2</strong>
+              <span>kPa</span>
+            </div>
+          </div>
+          <div class="control-copy">
+            <div class="label">枕头校准</div>
+            <h2>当前气压与保存点</h2>
+            <small class="calibration-hint">鼾声干预时的自动充气参考</small>
+            <p data-control-detail>一键保存会把当前真实气压写入云端设置和长期记忆。</p>
+          </div>
+        </div>
+        <div class="range-row">
+          <button class="round-btn" data-adjust="-0.2" aria-label="降低"><i data-lucide="minus"></i></button>
+          <input id="pressure" type="range" min="0" max="10" step="0.1" value="3.2">
+          <button class="round-btn" data-adjust="0.2" aria-label="升高"><i data-lucide="plus"></i></button>
+        </div>
+      </div>
+
+      <div class="quick">
+        <button class="primary" data-cmd="一键保存当前枕头气压"><i data-lucide="bookmark-check"></i>一键保存</button>
+        <button data-cmd="把枕头升高一点"><i data-lucide="arrow-up"></i>升高</button>
+        <button data-cmd="把枕头降低一点"><i data-lucide="arrow-down"></i>降低</button>
+        <button class="warn" data-cmd="远程急停"><i data-lucide="octagon-alert"></i>急停</button>
+      </div>
+
+      <div class="home-device-grid">
+        <div class="control-panel mini-panel home-device-card">
+          <div class="mini-title"><i data-lucide="snowflake"></i><span>空调</span><b class="mcp-device-badge">MCP</b></div>
+          <strong data-ir-state="air_conditioner">关</strong>
+          <div class="product-device-meta">睡眠温度联动</div>
+          <div class="segmented compact">
+            <button data-ir-device="air_conditioner" data-ir-action="on">开</button>
+            <button class="on" data-ir-device="air_conditioner" data-ir-action="off">关</button>
+          </div>
+        </div>
+        <div class="control-panel mini-panel home-device-card led-panel">
+          <div class="mini-title"><i data-lucide="lightbulb"></i><span>灯带</span><b class="mcp-device-badge">MCP</b></div>
+          <strong data-led-state>开</strong>
+          <input id="ledBrightness" class="led-slider" type="range" min="5" max="100" step="5" value="22">
+          <div class="led-row"><span>亮度</span><b data-led-brightness>22%</b></div>
+          <div class="segmented compact">
+            <button class="on" data-led-action="on">开</button>
+            <button data-led-action="off">关</button>
+          </div>
+        </div>
+        <div class="control-panel mini-panel home-device-card">
+          <div class="mini-title"><i data-lucide="fan"></i><span>风扇</span><b class="mcp-device-badge">MCP</b></div>
+          <strong data-ir-state="fan">关</strong>
+          <div class="product-device-meta">轻风循环联动</div>
+          <div class="segmented compact">
+            <button data-ir-device="fan" data-ir-action="on">开</button>
+            <button class="on" data-ir-device="fan" data-ir-action="off">关</button>
+          </div>
+        </div>
+        <div class="control-panel mini-panel home-device-card">
+          <div class="mini-title"><i data-lucide="droplets"></i><span>加湿器</span><b class="mcp-device-badge">MCP</b></div>
+          <strong data-ir-state="humidifier">关</strong>
+          <div class="product-device-meta">睡眠湿度联动</div>
+          <div class="segmented compact">
+            <button data-ir-device="humidifier" data-ir-action="on">开</button>
+            <button class="on" data-ir-device="humidifier" data-ir-action="off">关</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="command">
+        <input id="homeInput" placeholder="输入：把枕头升高一点，并调暗灯带">
+        <button class="send-btn" id="homeSend" aria-label="发送"><i data-lucide="send-horizontal"></i></button>
+      </div>
+
+      <div class="section">
+        <div class="panel-title">
+          <h2>家中状态</h2>
+          <span>实时回传</span>
+        </div>
+        <div class="metrics">
+          <div class="metric"><div class="name">心率</div><div class="num" style="color:var(--blue)">72</div><div class="sub">bpm，稳定</div></div>
+          <div class="metric"><div class="name">温湿度</div><div class="num" style="color:var(--amber)">24°</div><div class="sub">48% RH</div></div>
+          <div class="metric"><div class="name">空气</div><div class="num" style="color:var(--green)">优</div><div class="sub">MQ-135 正常</div></div>
+          <div class="metric"><div class="name">光照</div><div class="num" style="color:var(--green)">12</div><div class="sub">lux，偏暗</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="ai">
+      <div class="section">
+        <div class="panel-title">
+          <h2>远程对话</h2>
+          <span>云端模型</span>
+        </div>
+        <div class="chat" id="chat">
+          <div class="bubble">我已经读取家中状态，可以解释传感器数据，也可以下发安全指令给枕头中控。</div>
+          <div class="bubble me">帮我判断现在适不适合入睡。</div>
+          <div class="bubble">适合。光照较低，温湿度正常，支撑压力稳定。建议开启助眠模式，灯带降低到 20%。</div>
+        </div>
+      </div>
+      <div class="command">
+        <input id="aiInput" placeholder="远程和枕头 AI 对话">
+        <button class="send-btn" id="aiSend" aria-label="发送"><i data-lucide="send-horizontal"></i></button>
+      </div>
+
+      </section>
+    <section class="page" id="control">
+      <div class="section manual-stack">
+        <div class="panel-title product-control-title"><h2>MCP 服务</h2><span>用户授权配置</span></div>
+        <div class="product-mcp-note">
+          <div class="mcp-badge">MCP</div>
+          <div>
+            <strong>睡眠场景的 AI 服务层</strong>
+            <span>闹钟、音乐、邮件、滴滴打车和 PC Agent 通过用户授权接入，再由小安统一编排任务。</span>
+          </div>
+        </div>
+
+        <div class="manual-grid">
+          <div class="control-panel pc-agent-task-card">
+            <div class="mini-title"><i data-lucide="monitor"></i><span>PC Agent</span><b class="mcp-device-badge">MCP</b></div>
+            <strong>任务对话</strong>
+            <div class="pc-chat" id="pcChat">
+              <div class="bubble">像聊天一样调用 PC Agent 下发电脑端任务，让您在床上实现办公。</div>
+            </div>
+            <div class="command pc-command">
+              <input id="pcInput" placeholder="输入任务：播放助眠音乐，或整理今天邮件">
+              <button class="send-btn" id="pcSend" aria-label="发送"><i data-lucide="send-horizontal"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="product-mcp-layer">
+          <div class="mini-title"><span>MCP 服务接入</span><b>用户授权配置</b></div>
+          <div class="mcp-service-grid">
+            <div class="mcp-service" data-mcp-service="alarm" role="button" tabindex="0" aria-controls="serviceAlarmPanel"><i data-lucide="alarm-clock"></i><strong>闹钟</strong><span>云端定时 / 唤醒联动</span><em data-mcp-config-state="alarm">点击设置</em></div>
+            <div class="mcp-service" data-mcp-service="music" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="music-2"></i><strong>音乐</strong><span>网易云 / Cookie</span><em data-mcp-config-state="music">填入 Cookie</em></div>
+            <div class="mcp-service" data-mcp-service="mail" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="mail-check"></i><strong>邮件</strong><span>IMAP / 应用密码</span><em data-mcp-config-state="mail">填入邮箱</em></div>
+            <div class="mcp-service" data-mcp-service="didi" role="button" tabindex="0" aria-controls="mcpConfigPanel"><i data-lucide="car"></i><strong>滴滴打车</strong><span>DiDi MCP / 打车链接 API</span><em data-mcp-config-state="didi">填入 Key</em></div>
+          </div>
+<div class="control-panel settings-panel service-alarm-panel" id="serviceAlarmPanel">
+          <div class="manual-head">
+            <div><strong>智能闹钟</strong><span>到点先播放音乐，30 秒未离枕后枕头按气压循环升降</span></div>
+            <b data-alarm-state>未触发</b>
+          </div>
+          <div class="setting-row">
+            <div><strong>启用闹钟</strong><span>云端定时触发，手机关闭也可执行</span></div>
+            <label class="switch"><input id="alarmEnabled" type="checkbox"><b></b></label>
+          </div>
+          <div class="setting-grid">
+            <div class="setting-field">
+              <label for="alarmTime">时间</label>
+              <input id="alarmTime" type="time">
+            </div>
+            <div class="setting-field">
+              <label for="alarmRepeat">重复</label>
+              <select id="alarmRepeat">
+                <option value="daily">每天</option>
+                <option value="workday">工作日</option>
+                <option value="weekend">周末</option>
+                <option value="once">仅一次</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-field">
+            <label for="alarmSong">唤醒歌曲</label>
+            <input id="alarmSong" type="text" placeholder="例如：小半、起风了、孤勇者">
+          </div>
+        
+          <button class="settings-save service-alarm-save" id="alarmSaveBtn">保存闹钟</button>
+        </div>
+        
+          <div class="mcp-config-panel" id="mcpConfigPanel" data-mcp-config-panel>
+            <div class="mini-title"><span data-mcp-config-title>服务配置</span><b data-mcp-config-subtitle>请填入您的授权信息；不填则使用默认配置</b></div>
+            <div class="mcp-config-grid">
+              <label class="mcp-config-field" data-mcp-config-section="music"><span>音乐平台</span><input id="mcpMusicAuth" type="text" autocomplete="off" placeholder="请填入您的网易云 Cookie；不填则使用默认配置"></label>
+              <label class="mcp-config-field" data-mcp-config-section="mail"><span>邮箱服务</span><input id="mcpMailAuth" type="text" autocomplete="off" placeholder="请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置"></label>
+              <label class="mcp-config-field" data-mcp-config-section="didi"><span>滴滴 MCP</span><input id="mcpDidiAuth" type="text" autocomplete="off" placeholder="请填入您的 DiDi MCP Key；不填则使用默认配置"></label>
+            </div>
+            <button class="mcp-config-save" id="mcpConfigSave">保存用户配置</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="status">
+      <div class="section">
+        <div class="panel-title">
+          <h2>状态与提醒</h2>
+          <span>手机通知</span>
+        </div>
+        <div class="metrics live-metrics">
+          <div class="metric"><div class="name">压力</div><div class="num" data-live-pressure>--</div><div class="sub">kPa</div></div>
+          <div class="metric"><div class="name">温湿度</div><div class="num" data-live-env>--</div><div class="sub" data-live-humidity>等待数据</div></div>
+          <div class="metric"><div class="name">空气</div><div class="num" data-live-air>--</div><div class="sub">MQ-135 ppm</div></div>
+          <div class="metric"><div class="name">光照</div><div class="num" data-live-light>--</div><div class="sub">lux</div></div>
+        </div>
+        <div class="feed status-feed-lite">
+          <div class="feed-item" data-status-row="snore"><div><strong>鼾声干预</strong><span>等待本地鼾声检测事件。</span></div><div class="tag">待命</div></div>
+          <div class="feed-item" data-status-row="radar"><div><strong>生命体征</strong><span>等待雷达心率 / 呼吸数据。</span></div><div class="tag">等待</div></div>
+          <div class="feed-item" data-status-row="devices"><div><strong>设备状态</strong><span>等待灯带、风扇、加湿器状态。</span></div><div class="tag">等待</div></div>
+        </div>
+        <div class="wave-stack">
+          <div class="wave-card" data-wave-card="heart"><div class="wave-head"><strong>心率曲线</strong><span data-wave-value="heart">等待数据</span></div><canvas id="heartWave" width="360" height="72"></canvas></div>
+          <div class="wave-card" data-wave-card="breath"><div class="wave-head"><strong>呼吸曲线</strong><span data-wave-value="breath">等待数据</span></div><canvas id="breathWave" width="360" height="72"></canvas></div>
+          <div class="wave-card" data-wave-card="motion"><div class="wave-head"><strong>体动曲线</strong><span data-wave-value="motion">等待数据</span></div><canvas id="motionWave" width="360" height="72"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="settings">
+      <div class="section settings-stack">
+        <div class="panel-title">
+          <h2>小安设置</h2>
+          <span data-settings-sync>等待同步</span>
+        </div>
+
+<div class="control-panel settings-panel avatar-lab settings-avatar-lab">
+        <div class="panel-title">
+          <h2>AI 形象工坊</h2>
+          <span>一键同步 LCD</span>
+        </div>
+        <div class="avatar-lab-body">
+          <div class="avatar-preview" id="avatarPreview">
+            <span>LCD 预览</span>
+            <img id="avatarPreviewImg" alt="AI 形象预览">
+          </div>
+          <div class="avatar-workshop">
+            <textarea id="avatarPrompt" placeholder="描述你想要的小安形象">温柔治愈的智能睡眠助手，蓝紫色科技感，半身像，适合 320×480 竖屏 LCD，人物居中，背景简洁</textarea>
+            <div class="avatar-actions">
+              <button class="primary" id="avatarGenerateBtn">生成形象</button>
+              <button id="avatarSyncBtn">同步 LCD</button>
+            </div>
+            <div class="avatar-status" id="avatarStatus">生成后会自动转成枕头屏幕可显示的格式。</div>
+          </div>
+        </div>
+      </div>
+
+      
+        <div class="control-panel settings-panel personality-panel">
+          <div class="manual-head">
+            <div><strong>永久性格</strong><span>影响 AI 表达，不影响安全规则</span></div>
+            <b data-quiet-state>未判断</b>
+          </div>
+          <div class="setting-grid personality-grid">
+            <div class="setting-field">
+              <label for="settingTone">性格模式</label>
+              <select id="settingTone">
+                <option value="gentle">温柔陪伴</option>
+                <option value="pro">专业健康</option>
+                <option value="short">简短助手</option>
+                <option value="sleep">睡眠守护</option>
+              </select>
+            </div>
+            <div class="setting-field">
+              <label for="settingInitiative">主动性</label>
+              <select id="settingInitiative">
+                <option value="low">低主动，少打扰</option>
+                <option value="normal">正常提醒</option>
+                <option value="high">积极建议</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-field">
+            <label for="settingDescription">DIY 性格</label>
+            <textarea id="settingDescription" placeholder="例如：像真实女友一样温柔自然，少说教，低打扰，睡前更安静。"></textarea>
+          </div>
+        </div>
+
+        <div class="control-panel settings-panel">
+          <div class="manual-head">
+            <div><strong>睡眠勿扰时间</strong><span>这个是永久安全机制，优先级高于 AI 建议</span></div>
+            <b>策略</b>
+          </div>
+          <div class="setting-row">
+            <div><strong>夜间睡眠</strong><span>到点后自动低打扰</span></div>
+            <label class="switch"><input id="nightEnabled" type="checkbox"><b></b></label>
+          </div>
+          <div class="setting-grid">
+            <div class="setting-field">
+              <label for="nightStart">开始</label>
+              <input id="nightStart" type="time">
+            </div>
+            <div class="setting-field">
+              <label for="nightEnd">结束</label>
+              <input id="nightEnd" type="time">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div><strong>午休</strong><span>可选的第二段勿扰时间</span></div>
+            <label class="switch"><input id="napEnabled" type="checkbox"><b></b></label>
+          </div>
+          <div class="setting-grid">
+            <div class="setting-field">
+              <label for="napStart">开始</label>
+              <input id="napStart" type="time">
+            </div>
+            <div class="setting-field">
+              <label for="napEnd">结束</label>
+              <input id="napEnd" type="time">
+            </div>
+          </div>
+        </div>
+
+        <textarea id="memoryText" hidden></textarea>
+        <button class="settings-save settings-save-compact" id="settingsSave">保存到云端</button>
+      </div>
+    </section>
+
+  </div>
+
+  <nav class="tabbar">
+    <button class="tab active" data-tab="home"><i data-lucide="sliders-horizontal"></i><span>控制</span></button>
+    <button class="tab" data-tab="ai"><i data-lucide="message-circle"></i><span>小安</span></button>
+    <button class="tab" data-tab="control"><i data-lucide="workflow"></i><span>服务</span></button>
+    <button class="tab" data-tab="status"><i data-lucide="radar"></i><span>看板</span></button>
+  </nav>
+  <div class="toast" id="toast">已发送</div>
+</main>
+
+<script>
+const tabs=[...document.querySelectorAll('.tab')];
+const pages=[...document.querySelectorAll('.page')];
+const toast=document.getElementById('toast');
+const pressureInputs=[document.getElementById('pressure'),document.getElementById('pressure2')].filter(Boolean);
+const pressureTexts=[...document.querySelectorAll('[data-pressure]')];
+const APP_WS_URL='ws://39.106.190.124:8000/ws/app';
+const APP_API_BASE='http://39.106.190.124:8000';
+try{localStorage.setItem('xiaoan_app_ws',APP_WS_URL);}catch(e){}
+const APP_SESSION_ID=(()=>{try{let id=localStorage.getItem('xiaoan_app_session_id');if(!id){id='app-'+Date.now()+'-'+Math.floor(Math.random()*1000000);localStorage.setItem('xiaoan_app_session_id',id);}return id;}catch(e){return 'app-session';}})();
+let appWs=null;
+let appWsTimer=null;
+const appChatReplies=new Map();
+let cloudConnected=false;
+let esp32Connected=false;
+let ledEnabled=true;
+let ledBrightnessPct=22;
+let ledSendTimer=null;
+const irDeviceState={fan:false,humidifier:false,air_conditioner:false};
+let userSettings=null;
+let latestSensorData={};
+let latestSnoreEvent=null;
+let latestSensorAt=0;
+let latestMeasuredPressure=null;
+
+function defaultSettings(){
+  return {
+    personality:{
+      name:'小安',
+      tone:'gentle',
+      style:'short',
+      initiative:'low',
+      description:'温柔、克制、低打扰，像真实的枕边生活助手，不要有太重的 AI 味。'
+    },
+    quiet_periods:[
+      {name:'night_sleep',label:'夜间睡眠',enabled:false,start:'22:30',end:'07:30'},
+      {name:'nap',label:'午休',enabled:false,start:'13:00',end:'14:30'}
+    ],
+    quiet_rules:{
+      block_ai_voice:false,
+      block_ai_light:false,
+      block_ai_screen:false,
+      block_ai_pc_agent:false,
+      allow_gentle_pillow_adjust:false,
+      allow_sleep_environment_control:true,
+      alert_method:'phone_only'
+    },
+    pillow_calibration:{
+      saved_kpa:3.2,
+      saved_at:'',
+      snore_adjust_enabled:true
+    },
+    alarms:[{
+      id:'wake_alarm',
+      enabled:false,
+      time:'07:30',
+      repeat:'daily',
+      song_query:'小半',
+      music_stage_seconds:30,
+      leave_confirm_seconds:5,
+      pillow_up_seconds:3,
+      pillow_down_seconds:3,
+      pillow_high_kpa:5,
+      pillow_low_kpa:0.7,
+      last_triggered_key:''
+    }],
+    memory:[
+      '用户喜欢低打扰、自然一点的表达，不喜欢太明显的 AI 味。',
+      '睡眠时不要主动语音播报、闪灯或亮屏。',
+      '灯带默认应是高级、柔和的暖色，不要上电就七彩变化。'
+    ]
+  };
+}
+
+function installIcons(){
+  if(window.lucide){window.lucide.createIcons({attrs:{'stroke-width':2.1}});}
+}
+function show(text){
+  toast.textContent=text || '已发送';
+  toast.classList.add('show');
+  clearTimeout(show.timer);
+  show.timer=setTimeout(()=>toast.classList.remove('show'),1700);
+}
+function currentTargetPressure(){
+  return Number(pressureInputs[0]?.value || 3.2);
+}
+function sendPillowCommand(action,options={}){
+  const payload={type:'pillow_cmd',action,duration_sec:Number(options.duration_sec ?? 2)};
+  const actionNames={tilt:'升高',recover:'降低',halt:'停止',stop:'急停'};
+  if(options.target_kpa!==undefined){
+    payload.target_kpa=Number(options.target_kpa);
+  }
+  const ok=sendAppWs(payload);
+  if(ok){
+    if(payload.target_kpa!==undefined){
+      show('已下发目标压力：' + payload.target_kpa.toFixed(1) + ' kPa');
+    }else{
+      show('已下发枕头指令：' + (actionNames[action] || action));
+    }
+  }else{
+    show('发送失败：云端未连接');
+  }
+  return ok;
+}
+function clampLedBrightness(value){
+  return Math.max(0,Math.min(100,Math.round(Number(value) || 0)));
+}
+function setLedUi(enabled,brightnessPct){
+  ledEnabled=!!enabled;
+  ledBrightnessPct=clampLedBrightness(brightnessPct);
+  const stateText=document.querySelector('[data-led-state]');
+  const brightText=document.querySelector('[data-led-brightness]');
+  const input=document.getElementById('ledBrightness');
+  if(stateText)stateText.textContent=ledEnabled ? '开' : '关';
+  if(brightText)brightText.textContent=ledBrightnessPct + '%';
+  if(input && document.activeElement!==input)input.value=Math.max(5,ledBrightnessPct || 5);
+  document.querySelectorAll('[data-led-action]').forEach(btn=>{
+    const action=btn.dataset.ledAction;
+    btn.classList.toggle('on',(ledEnabled && action==='on') || (!ledEnabled && action==='off'));
+  });
+}
+function sendLedCommand(action,brightnessPct){
+  const nextBrightness=action==='off' ? 0 : clampLedBrightness(brightnessPct ?? (ledBrightnessPct || 22));
+  const enabled=action==='off' ? false : true;
+  const payload={type:'led_cmd',action,enabled,brightness_pct:nextBrightness};
+  const ok=sendAppWs(payload);
+  if(ok){
+    setLedUi(enabled,nextBrightness);
+    show(action==='off' ? '灯带已关闭' : '灯带亮度 ' + nextBrightness + '%');
+  }else{
+    show('灯带发送失败：云端未连接');
+  }
+  return ok;
+}
+function setIrDeviceUi(device,on){
+  if(device!=='fan' && device!=='humidifier' && device!=='air_conditioner')return;
+  irDeviceState[device]=!!on;
+  const stateText=document.querySelector('[data-ir-state="' + device + '"]');
+  if(stateText)stateText.textContent=irDeviceState[device] ? '开' : '关';
+  document.querySelectorAll('[data-ir-device="' + device + '"]').forEach(btn=>{
+    const action=btn.dataset.irAction;
+    btn.classList.toggle('on',(irDeviceState[device] && action==='on') || (!irDeviceState[device] && action==='off'));
+  });
+}
+function sendIrCommand(device,action){
+  const names={fan:'风扇',humidifier:'加湿器',air_conditioner:'空调'};
+  const ok=sendAppWs({type:'ir_cmd',device,action});
+  if(ok){
+    show((names[device] || '红外设备') + (action==='off' ? '关闭指令已发送' : '开启指令已发送'));
+  }else{
+    show('红外指令发送失败：云端未连接');
+  }
+  return ok;
+}
+function scheduleLedBrightness(value){
+  const next=clampLedBrightness(value);
+  setLedUi(true,next);
+  clearTimeout(ledSendTimer);
+  ledSendTimer=setTimeout(()=>sendLedCommand('set',next),180);
+}
+function sendAiIntent(text,{mirrorToChat=false}={}){
+  const t=(text || '').trim();
+  if(!t)return false;
+  const requestId='app-chat-' + Date.now() + '-' + Math.floor(Math.random()*10000);
+  let reply=null;
+  if(mirrorToChat){
+    const chat=document.getElementById('chat');
+    makeChatBubble(chat,'bubble me',t);
+    reply=makeChatBubble(chat,'bubble','发送中...');
+    appChatReplies.set(requestId,reply);
+  }
+  const ok=sendAppWs({type:'app_chat',text:t,request_id:requestId,session_id:APP_SESSION_ID});
+  if(!ok){
+    if(reply){
+      reply.textContent='发送失败：云端未连接';
+      appChatReplies.delete(requestId);
+    }else{
+      show('发送失败：云端未连接');
+    }
+    return false;
+  }
+  if(!mirrorToChat){
+    show('已发送给云端 AI：' + t);
+  }
+  return true;
+}
+function sendCommand(text){
+  const t=(text || '').trim();
+  if(!t)return;
+  if(t.includes('连续升高')){
+    sendPillowCommand('tilt',{duration_sec:600});
+    return;
+  }
+  if(t.includes('连续降低')){
+    sendPillowCommand('recover',{duration_sec:600});
+    return;
+  }
+  if(t.includes('连续停止')){
+    sendPillowCommand('halt',{duration_sec:0});
+    return;
+  }
+  const kpaMatch=t.match(/([0-9]+(?:\.[0-9]+)?)\s*kPa/i);
+  if(kpaMatch || t.includes('目标压力') || t.includes('目标支撑') || t.includes('执行目标')){
+    const target=kpaMatch ? Number(kpaMatch[1]) : currentTargetPressure();
+    setPressure(target);
+    sendPillowCommand('tilt',{target_kpa:target,duration_sec:0});
+    return;
+  }
+  if(t.includes('急停') || t.includes('停止')){
+    sendPillowCommand('stop',{duration_sec:0});
+    return;
+  }
+  if(t.includes('泄压') || t.includes('降低')){
+    sendPillowCommand('recover',{duration_sec:2});
+    return;
+  }
+  if(t.includes('充气') || t.includes('升高')){
+    sendPillowCommand('tilt',{duration_sec:2});
+    return;
+  }
+  sendAiIntent(t);
+}
+function setPressure(value){
+  const v=Math.max(0,Math.min(10,Number(value))).toFixed(1);
+  pressureInputs.forEach(input=>input.value=v);
+  pressureTexts.forEach(el=>el.textContent=v);
+}
+function setText(selector,value){
+  document.querySelectorAll(selector).forEach(el=>{el.textContent=value});
+}
+function setCloudState(online,espOnline=esp32Connected){
+  cloudConnected=!!online;
+  const pill=document.querySelector('.status-pill');
+  if(!pill)return;
+  if(!online){
+    pill.innerHTML='<span class="dot"></span>云端离线';
+  }else if(!espOnline){
+    pill.innerHTML='<span class="dot"></span>主控离线';
+  }else{
+    pill.innerHTML='<span class="dot"></span>家中在线';
+  }
+}
+function getPeriod(settings,name){
+  return (settings.quiet_periods || []).find(item=>item.name===name) || {};
+}
+function getAlarm(settings){
+  return (settings.alarms || [])[0] || defaultSettings().alarms[0];
+}
+function setValue(id,value){
+  const el=document.getElementById(id);
+  if(el)el.value=value ?? '';
+}
+function setChecked(id,value){
+  const el=document.getElementById(id);
+  if(el)el.checked=!!value;
+}
+function updateQuietBadge(quietStatus){
+  const badge=document.querySelector('[data-quiet-state]');
+  if(!badge)return;
+  if(quietStatus && quietStatus.active){
+    const period=quietStatus.period || {};
+    badge.textContent=(period.label || '勿扰中');
+    badge.className='tag good';
+  }else{
+    badge.textContent='未勿扰';
+    badge.className='';
+  }
+}
+function updateAlarmBadge(alarmState){
+  const badge=document.querySelector('[data-alarm-state]');
+  if(!badge)return;
+  const state=alarmState || {};
+  const stage=state.stage || 'idle';
+  const text=state.message || (stage==='idle' ? '未触发' : stage);
+  badge.textContent=text;
+  badge.className=state.active ? 'tag good' : '';
+}
+const AI_PERSONA_PRESETS={
+  gentle:{tone:'gentle',style:'balanced',initiative:'normal',description:'温柔陪伴、自然克制，像真实的枕边生活助手。'},
+  pro:{tone:'pro',style:'short',initiative:'normal',description:'专业健康、简洁可靠，重点关注睡眠和传感器状态。'},
+  short:{tone:'short',style:'short',initiative:'low',description:'简短直接、少打扰，只给必要提醒。'},
+  sleep:{tone:'sleep',style:'short',initiative:'low',description:'睡眠守护、低打扰、少出声，优先帮助用户放松入睡。'}
+};
+function normalizePersonaMode(value){
+  const key=String(value || '').toLowerCase();
+  if(key==='professional')return 'pro';
+  if(key==='calm')return 'short';
+  if(key==='warm')return 'gentle';
+  return AI_PERSONA_PRESETS[key] ? key : 'gentle';
+}
+function applyPersonaPreset(mode,overwriteDescription=false){
+  const preset=AI_PERSONA_PRESETS[normalizePersonaMode(mode)] || AI_PERSONA_PRESETS.gentle;
+  setValue('settingTone',preset.tone);
+  setValue('settingStyle',preset.style);
+  setValue('settingInitiative',preset.initiative);
+  const desc=document.getElementById('settingDescription');
+  if(desc && (overwriteDescription || !desc.value.trim()))desc.value=preset.description;
+}
+function applySettings(settings,quietStatus){
+  userSettings=Object.assign(defaultSettings(),settings || {});
+  userSettings.personality=Object.assign(defaultSettings().personality,userSettings.personality || {});
+  userSettings.quiet_rules=Object.assign(defaultSettings().quiet_rules,userSettings.quiet_rules || {});
+  userSettings.alarms=userSettings.alarms || defaultSettings().alarms;
+  const night=getPeriod(userSettings,'night_sleep');
+  const nap=getPeriod(userSettings,'nap');
+  const alarm=getAlarm(userSettings);
+  setValue('settingTone',normalizePersonaMode(userSettings.personality.tone));
+  setValue('settingStyle',userSettings.personality.style);
+  setValue('settingInitiative',userSettings.personality.initiative);
+  setValue('settingDescription',userSettings.personality.description);
+  setChecked('nightEnabled',night.enabled);
+  setValue('nightStart',night.start || '22:30');
+  setValue('nightEnd',night.end || '07:30');
+  setChecked('napEnabled',nap.enabled);
+  setValue('napStart',nap.start || '13:00');
+  setValue('napEnd',nap.end || '14:30');
+  setChecked('blockVoice',userSettings.quiet_rules.block_ai_voice);
+  setChecked('blockLight',userSettings.quiet_rules.block_ai_light);
+  setChecked('blockScreen',userSettings.quiet_rules.block_ai_screen);
+  setChecked('blockPcAgent',userSettings.quiet_rules.block_ai_pc_agent);
+  setChecked('allowPillow',userSettings.quiet_rules.allow_gentle_pillow_adjust);
+  setChecked('allowEnvironment',userSettings.quiet_rules.allow_sleep_environment_control);
+  setChecked('alarmEnabled',alarm.enabled);
+  setValue('alarmTime',alarm.time || '07:30');
+  setValue('alarmRepeat',alarm.repeat || 'daily');
+  setValue('alarmSong',alarm.song_query || '小半');
+  setValue('memoryText',(userSettings.memory || []).join('\n'));
+  const sync=document.querySelector('[data-settings-sync]');
+  if(sync)sync.textContent='已同步';
+  updateQuietBadge(quietStatus);
+}
+function collectSettings(){
+  const currentAlarm=getAlarm(userSettings || defaultSettings());
+  return {
+    personality:{
+      name:'小安',
+      tone:document.getElementById('settingTone')?.value || 'gentle',
+      style:document.getElementById('settingStyle')?.value || 'short',
+      initiative:document.getElementById('settingInitiative')?.value || 'low',
+      description:document.getElementById('settingDescription')?.value || ''
+    },
+    quiet_periods:[
+      {
+        name:'night_sleep',
+        label:'夜间睡眠',
+        enabled:!!document.getElementById('nightEnabled')?.checked,
+        start:document.getElementById('nightStart')?.value || '22:30',
+        end:document.getElementById('nightEnd')?.value || '07:30'
+      },
+      {
+        name:'nap',
+        label:'午休',
+        enabled:!!document.getElementById('napEnabled')?.checked,
+        start:document.getElementById('napStart')?.value || '13:00',
+        end:document.getElementById('napEnd')?.value || '14:30'
+      }
+    ],
+    quiet_rules:{
+      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
+      block_ai_light:false,
+      block_ai_screen:false,
+      block_ai_pc_agent:false,
+      allow_gentle_pillow_adjust:false,
+      allow_sleep_environment_control:true,
+      alert_method:'phone_only'
+    },
+    alarms:[{
+      id:currentAlarm.id || 'wake_alarm',
+      enabled:!!document.getElementById('alarmEnabled')?.checked,
+      time:document.getElementById('alarmTime')?.value || '07:30',
+      repeat:document.getElementById('alarmRepeat')?.value || 'daily',
+      song_query:(document.getElementById('alarmSong')?.value || '小半').trim() || '小半',
+      music_stage_seconds:30,
+      leave_confirm_seconds:5,
+      pillow_up_seconds:3,
+      pillow_down_seconds:3,
+      pillow_high_kpa:5,
+      pillow_low_kpa:0.7,
+      last_triggered_key:currentAlarm.last_triggered_key || ''
+    }],
+    memory:(document.getElementById('memoryText')?.value || '')
+      .split('\n')
+      .map(line=>line.trim())
+      .filter(Boolean)
+      .slice(0,20)
+  };
+}
+function saveSettings(){
+  const settings=collectSettings();
+  const ok=sendAppWs({type:'settings_update',settings});
+  if(ok){
+    const sync=document.querySelector('[data-settings-sync]');
+    if(sync)sync.textContent='保存中';
+    show('正在保存设置');
+  }else{
+    show('保存失败：云端未连接');
+  }
+}
+function updateTelemetry(payload){
+  if(Object.prototype.hasOwnProperty.call(payload,'esp32_connected')){
+    esp32Connected=!!payload.esp32_connected;
+    setCloudState(cloudConnected,esp32Connected);
+  }
+  const latest=payload.latest || {};
+  const data=latest.data || payload.data || {};
+  if(typeof data.pressure_kpa==='number' && data.pressure_valid!==false){
+    const v=Number(data.pressure_kpa).toFixed(1);
+    setPressure(v);
+    setText('[data-live-pressure]',v);
+  }
+  if(typeof data.temperature_c==='number'){
+    setText('[data-live-env]',Number(data.temperature_c).toFixed(1)+'°');
+  }
+  if(typeof data.humidity_pct==='number'){
+    setText('[data-live-humidity]',Number(data.humidity_pct).toFixed(0)+'% RH');
+  }
+  if(typeof data.mq135_ppm==='number'){
+    const air=Number(data.mq135_ppm);
+    setText('[data-live-air]',air < 10 ? air.toFixed(1) : air.toFixed(0));
+  }
+  if(typeof data.light_lux==='number'){
+    setText('[data-live-light]',Number(data.light_lux).toFixed(0));
+  }
+  if(typeof data.led_enabled==='boolean' || typeof data.led_brightness_pct==='number'){
+    setLedUi(
+      typeof data.led_enabled==='boolean' ? data.led_enabled : ledEnabled,
+      typeof data.led_brightness_pct==='number' ? data.led_brightness_pct : ledBrightnessPct
+    );
+  }
+  if(typeof data.fan_on==='boolean'){
+    setIrDeviceUi('fan',data.fan_on);
+  }
+  if(typeof data.humidifier_on==='boolean'){
+    setIrDeviceUi('humidifier',data.humidifier_on);
+  }
+}
+function sendAppWs(obj){
+  if(!appWs || appWs.readyState!==WebSocket.OPEN)return false;
+  appWs.send(JSON.stringify(obj));
+  return true;
+}
+function scrollChatToBottom(chat){
+  if(chat)chat.scrollTop=chat.scrollHeight;
+}
+function makeChatBubble(chat,className,text){
+  const bubble=document.createElement('div');
+  bubble.className=className;
+  bubble.textContent=text || '';
+  chat.appendChild(bubble);
+  scrollChatToBottom(chat);
+  return bubble;
+}
+function updateAppChat(msg){
+  const requestId=msg.request_id || '';
+  const bubble=appChatReplies.get(requestId);
+  if(!bubble)return;
+  if(msg.type==='app_chat_start'){
+    bubble.textContent='正在思考...';
+  }else if(msg.type==='app_chat_delta'){
+    bubble.textContent=msg.text || ((bubble.textContent || '') + (msg.delta || ''));
+  }else if(msg.type==='app_chat_done'){
+    bubble.textContent=msg.text || bubble.textContent || '已完成';
+    appChatReplies.delete(requestId);
+  }else if(msg.type==='app_chat_error'){
+    bubble.textContent='发送失败：' + (msg.error || '云端未响应');
+    appChatReplies.delete(requestId);
+  }
+  scrollChatToBottom(bubble.parentElement);
+}
+function appendDidiRideLinkBubble(msg){
+  const chat=(msg.source==='pc_agent_task' ? document.getElementById('pcChat') : document.getElementById('chat')) || document.getElementById('pcChat') || document.getElementById('chat');
+  if(!chat)return;
+  const box=document.createElement('div');
+  box.className='bubble didi-card';
+  const title=document.createElement('strong');
+  title.textContent='滴滴打车链接';
+  box.appendChild(title);
+  box.appendChild(document.createElement('br'));
+  const route=document.createElement('span');
+  route.textContent=msg.route || '已生成路线';
+  box.appendChild(route);
+  if(msg.estimate){
+    box.appendChild(document.createElement('br'));
+    const estimate=document.createElement('span');
+    estimate.textContent='预估：' + msg.estimate;
+    box.appendChild(estimate);
+  }
+  const appLink=msg.appLink || msg.browserLink || '';
+  const miniLink=msg.miniprogramLink || '';
+  if(appLink){
+    box.appendChild(document.createElement('br'));
+    const a=document.createElement('a');
+    a.href=appLink;
+    a.target='_blank';
+    a.rel='noopener';
+    a.textContent='打开滴滴 App 链接';
+    box.appendChild(a);
+  }
+  if(miniLink){
+    box.appendChild(document.createElement('br'));
+    const a=document.createElement('a');
+    a.href=miniLink;
+    a.target='_blank';
+    a.rel='noopener';
+    a.textContent='打开小程序链接';
+    box.appendChild(a);
+  }
+  box.appendChild(document.createElement('br'));
+  const tip=document.createElement('small');
+  tip.textContent='请在手机上确认车型、下单并支付。';
+  box.appendChild(tip);
+  chat.appendChild(box);
+  scrollChatToBottom(chat);
+}
+function sendAiChatText(){
+  const input=document.getElementById('aiInput');
+  const text=input.value.trim();
+  if(!text)return;
+  input.value='';
+  sendAiIntent(text,{mirrorToChat:true});
+}
+
+let currentAvatarManifest=null;
+function avatarApi(path){return (typeof APP_API_BASE!=='undefined' ? APP_API_BASE : 'http://39.106.190.124:8000') + path;}
+function setAvatarStatus(text){const el=document.getElementById('avatarStatus');if(el)el.textContent=text || '';}
+function updateAvatarPreview(manifest){
+  currentAvatarManifest=manifest || currentAvatarManifest;
+  const box=document.getElementById('avatarPreview');
+  const img=document.getElementById('avatarPreviewImg');
+  const url=currentAvatarManifest && ((currentAvatarManifest.urls&&currentAvatarManifest.urls.preview) || (currentAvatarManifest.files&&avatarApi(currentAvatarManifest.files.preview)));
+  if(box&&img&&url){img.src=url + (url.includes('?')?'&':'?') + 't=' + Date.now();box.classList.add('has-image');}
+}
+async function loadCurrentAvatar(){
+  try{
+    const res=await fetch(avatarApi('/api/avatar/current/manifest'),{cache:'no-store'});
+    const data=await res.json();
+    if(data&&data.ok){updateAvatarPreview(data);setAvatarStatus('已加载当前 LCD 形象。');}
+  }catch(e){}
+}
+async function generateAvatarFromPrompt(){
+  const prompt=(document.getElementById('avatarPrompt')?.value || '').trim();
+  const btn=document.getElementById('avatarGenerateBtn');
+  if(btn)btn.disabled=true;
+  setAvatarStatus('正在生成 AI 形象并转换 LCD 格式...');
+  try{
+    const res=await fetch(avatarApi('/api/avatar/generate'),{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok)throw new Error((data.detail||data.error||'生成失败'));
+    updateAvatarPreview(data);
+    setAvatarStatus('已生成，可同步到枕头 LCD。');
+    show('AI 形象已生成');
+  }catch(e){setAvatarStatus('生成失败：' + (e.message||e));show('形象生成失败');}
+  finally{if(btn)btn.disabled=false;}
+}
+async function syncAvatarToLcd(){
+  const btn=document.getElementById('avatarSyncBtn');
+  if(btn)btn.disabled=true;
+  setAvatarStatus('正在通知枕头同步 LCD 形象...');
+  try{
+    const res=await fetch(avatarApi('/api/avatar/sync'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.detail||'同步失败');
+    setAvatarStatus(data.ok?'已下发到枕头，LCD 正在切换。':'云端形象已准备好，等待枕头在线。');
+    show(data.ok?'LCD 形象同步中':'枕头未在线');
+  }catch(e){setAvatarStatus('同步失败：' + (e.message||e));show('LCD 同步失败');}
+  finally{if(btn)btn.disabled=false;}
+}
+function bindAvatarWorkshop(){
+  document.getElementById('avatarGenerateBtn')?.addEventListener('click',generateAvatarFromPrompt);
+  document.getElementById('avatarSyncBtn')?.addEventListener('click',syncAvatarToLcd);
+  loadCurrentAvatar();
+}
+
+function connectAppWs(){
+  clearTimeout(appWsTimer);
+  try{
+    appWs=new WebSocket(APP_WS_URL);
+  }catch{
+    appWsTimer=setTimeout(connectAppWs,3000);
+    return;
+  }
+  appWs.onopen=()=>{
+    setCloudState(true,esp32Connected);
+    sendAppWs({type:'read_sensors'});
+    sendAppWs({type:'settings_get'});
+  };
+  appWs.onmessage=(event)=>{
+    let msg;
+    try{msg=JSON.parse(event.data)}catch{return}
+    if(msg.type==='sensor_data' || msg.type==='app_hello'){
+      if(msg.latest_snore_event && typeof msg.latest_snore_event==='object')latestSnoreEvent=msg.latest_snore_event;
+      updateTelemetry(msg);
+      if(msg.settings)applySettings(msg.settings,msg.quiet_status);
+      if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
+    }else if(msg.type==='snore_event'){
+      latestSnoreEvent=(msg.data && typeof msg.data==='object') ? msg.data : null;
+      if(latestSnoreEvent){
+        latestSensorData=Object.assign({},latestSensorData || {},{last_snore_event:latestSnoreEvent});
+        updateStatusRows(latestSensorData || {});
+        show(latestSnoreEvent.adjusted===false ? '检测到鼾声，但枕头调整未执行' : '检测到鼾声，已自动调整枕头');
+      }
+    }else if(msg.type==='app_chat_start' || msg.type==='app_chat_delta' || msg.type==='app_chat_done' || msg.type==='app_chat_error'){
+      updateAppChat(msg);
+    }else if(msg.type==='didi_ride_link'){
+      show('滴滴打车链接已生成，请在手机上打开确认');
+      appendDidiRideLinkBubble(msg);
+    }else if(msg.type==='avatar_generated'){
+      if(msg.manifest)updateAvatarPreview(msg.manifest);
+      setAvatarStatus('新的 AI 形象已生成，可同步 LCD。');
+    }else if(msg.type==='avatar_state'){
+      setAvatarStatus(msg.ok ? '枕头 LCD 已切换新形象。' : '枕头 LCD 同步失败。');
+      show(msg.ok ? 'LCD 形象已切换' : 'LCD 形象同步失败');
+    }else if(msg.type==='settings_state'){
+      applySettings(msg.settings,msg.quiet_status);
+      if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
+      show(msg.ok ? '设置已保存到云端' : '设置已同步');
+    }else if(msg.type==='alarm_state'){
+      updateAlarmBadge(msg.state);
+    }else if(msg.type==='command_ack'){
+      if(msg.target==='led'){
+        show(msg.ok ? '灯带指令已送达主控' : '主控离线：灯带指令未送达');
+      }else if(msg.target==='ir'){
+        const names={fan:'风扇',humidifier:'加湿器',air_conditioner:'空调'};
+        show(msg.ok ? (names[msg.device] || '红外设备') + '指令已送达主控' : '主控离线：红外指令未送达');
+      }else{
+        show(msg.ok ? '枕头指令已送达主控' : '主控离线：枕头指令未送达');
+      }
+    }else if(msg.type==='led_state'){
+      const data=msg.data || {};
+      setLedUi(
+        typeof data.enabled==='boolean' ? data.enabled : ledEnabled,
+        typeof data.brightness_pct==='number' ? data.brightness_pct : ledBrightnessPct
+      );
+    }else if(msg.type==='ir_state'){
+      const data=msg.data || {};
+      if(typeof data.fan_on==='boolean')setIrDeviceUi('fan',data.fan_on);
+      if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
+    }else if(msg.type==='pump_result'){
+      const data=msg.data || {};
+      if(typeof data.result_kpa==='number'){
+        setPressure(data.result_kpa);
+        show('枕头已调整到 ' + Number(data.result_kpa).toFixed(1) + ' kPa');
+      }
+    }
+  };
+  appWs.onclose=()=>{
+    setCloudState(false,false);
+    appWsTimer=setTimeout(connectAppWs,3000);
+  };
+  appWs.onerror=()=>{
+    setCloudState(false,false);
+  };
+}
+
+
+/* remaining-task optimization: real telemetry/status/settings logic */
+function pickNumber(obj,keys){
+  for(const key of keys){
+    const value=obj && obj[key];
+    if(value!==undefined && value!==null && value!=='' && Number.isFinite(Number(value)))return Number(value);
+  }
+  return null;
+}
+function flattenSensorData(payload){
+  const latest=(payload && payload.latest) || {};
+  const data=(latest && latest.data) || (payload && payload.data) || latest || payload || {};
+  return data && typeof data==='object' ? data : {};
+}
+function fsrSummary(data){
+  const values=[];
+  const add=(value,valid=true)=>{
+    const n=Number(value);
+    if(valid!==false && Number.isFinite(n))values.push(n);
+  };
+  const list=data.fsr || data.fsr402 || data.fsr_values || data.fsr_forces;
+  if(Array.isArray(list)){
+    list.forEach(item=>{
+      if(item && typeof item==='object')add(item.n ?? item.force_n ?? item.pressure_n ?? item.value ?? item.raw, item.valid);
+      else add(item,true);
+    });
+  }
+  ['fsr1_n','fsr2_n','fsr3_n','fsr4_n','fsr_1_n','fsr_2_n','fsr_3_n','fsr_4_n','fsr1','fsr2','fsr3','fsr4','fsr0','fsr_0'].forEach(k=>add(data[k],true));
+  const max=values.length ? Math.max(...values) : null;
+  return {values,max,onPillow:max===null ? null : max>=0.05};
+}
+function envSummary(data){
+  const temp=pickNumber(data,['temperature_c','temp_c','sht31_temp_c','temperature']);
+  const hum=pickNumber(data,['humidity_pct','humidity','rh','sht31_humidity_pct']);
+  const light=pickNumber(data,['light_lux','lux','bh1750_lux']);
+  const air=pickNumber(data,['mq135_ppm','air_ppm','mq135','air_quality']);
+  return {temp,hum,light,air};
+}
+function radarSummary(data){
+  const hr=pickNumber(data,['heart_rate_bpm','hr_bpm','radar_hr_bpm','heart_rate','hr']);
+  const br=pickNumber(data,['breath_rate_bpm','br_bpm','radar_br_bpm','breath_rate','br','respiration_rate_bpm']);
+  return {hr,br,valid:hr!==null || br!==null};
+}
+function pressureSummary(data){
+  if(data.pressure_valid===false)return null;
+  return pickNumber(data,['pressure_kpa','pillow_pressure_kpa','current_kpa','air_kpa']);
+}
+function snoreSummary(data){
+  const evt=(data && data.last_snore_event && typeof data.last_snore_event==='object')
+    ? data.last_snore_event
+    : (latestSnoreEvent && typeof latestSnoreEvent==='object' ? latestSnoreEvent : null);
+  if(!evt)return null;
+  const score=Number(evt.score);
+  const target=Number(evt.target_kpa);
+  const receivedAt=evt.received_at || evt.time || '';
+  return {
+    score:Number.isFinite(score)?score:null,
+    target_kpa:Number.isFinite(target)?target:null,
+    adjusted:evt.adjusted!==false,
+    received_at:receivedAt
+  };
+}
+function tag(el,text,state){
+  if(!el)return;
+  el.textContent=text;
+  el.className='tag' + (state==='good'?' good':state==='warn'?' warn':'');
+}
+function updateRow(name,title,detail,badge,state){
+  const row=document.querySelector('[data-status-row="' + name + '"]');
+  if(!row)return;
+  const strong=row.querySelector('strong');
+  const span=row.querySelector('span');
+  const t=row.querySelector('.tag');
+  if(strong)strong.textContent=title;
+  if(span)span.textContent=detail;
+  tag(t,badge,state);
+}
+function fmtTime(value){
+  if(!value)return '未保存';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return String(value).slice(0,16);
+  return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function updateCalibrationUi(settings){
+  const cal=(settings && settings.pillow_calibration) || defaultSettings().pillow_calibration || {};
+  const kpa=Number(cal.saved_kpa);
+  setText('[data-saved-kpa]',Number.isFinite(kpa) ? kpa.toFixed(1)+' kPa' : '-- kPa');
+  setText('[data-saved-at]',fmtTime(cal.saved_at));
+}
+function buildHomeSummary(data){
+  const fsr=fsrSummary(data);
+  const p=pressureSummary(data);
+  const env=envSummary(data);
+  const hasAny=Object.keys(data || {}).length>0;
+  const title=document.querySelector('[data-home-title]');
+  const subtitle=document.querySelector('[data-home-subtitle]');
+  const presence=document.querySelector('[data-pillow-presence]');
+  const insightTitle=document.querySelector('[data-home-insight-title]');
+  const insightDetail=document.querySelector('[data-home-insight-detail]');
+  if(!hasAny){
+    if(title)title.textContent='等待主控数据';
+    if(subtitle)subtitle.textContent='云端连接后会显示枕上状态、当前气压和卧室环境。';
+    if(presence)presence.innerHTML='<i data-lucide="activity"></i>等待数据';
+    if(insightTitle)insightTitle.textContent='小安判断：等待传感器';
+    if(insightDetail)insightDetail.textContent='没有真实数据时不再显示演示结论。';
+    installMcpUserConfigControls();
+installIcons();
+    return;
+  }
+  const onText=fsr.onPillow===null?'等待 FSR':(fsr.onPillow?'枕上有人':'枕上无人');
+  if(title)title.textContent=fsr.onPillow ? '枕上有人，正在守护睡眠' : fsr.onPillow===false ? '枕上无人，等待上枕' : '正在读取枕头状态';
+  const pieces=[];
+  if(p!==null)pieces.push('气压 '+p.toFixed(1)+' kPa');
+  if(env.temp!==null)pieces.push('温度 '+env.temp.toFixed(1)+'°');
+  if(env.hum!==null)pieces.push('湿度 '+env.hum.toFixed(0)+'%');
+  if(env.light!==null)pieces.push('光照 '+env.light.toFixed(0)+' lux');
+  if(subtitle)subtitle.textContent=pieces.length ? pieces.join(' · ') : '已收到主控数据，部分传感器等待有效值。';
+  if(presence)presence.innerHTML='<i data-lucide="activity"></i>'+onText;
+  if(insightTitle)insightTitle.textContent='小安判断：' + (fsr.onPillow ? '有人在枕上' : fsr.onPillow===false ? '当前未上枕' : '等待压力确认');
+  const envText=[];
+  if(env.light!==null)envText.push(env.light<30?'光照偏低':'光照偏亮');
+  if(env.temp!==null)envText.push('温度 '+env.temp.toFixed(1)+'°');
+  if(env.air!==null)envText.push('空气 '+env.air.toFixed(env.air<10?1:0));
+  if(insightDetail)insightDetail.textContent=(envText.join('，') || '环境数据等待中') + (p!==null ? '，当前枕压 '+p.toFixed(1)+' kPa。' : '，气压等待中。');
+  installIcons();
+}
+function updateStatusRows(data){
+  const fsr=fsrSummary(data);
+  const p=pressureSummary(data);
+  const env=envSummary(data);
+  const radar=radarSummary(data);
+  const cal=(userSettings && userSettings.pillow_calibration) || defaultSettings().pillow_calibration || {};
+  if(fsr.onPillow===null){
+    updateRow('pillow','枕上状态','等待 FSR402 压力数据。','等待','');
+  }else{
+    updateRow('pillow','枕上状态','FSR 最大压力 '+(fsr.max||0).toFixed(2)+' N；阈值 >= 0.05 N 判定有人。',fsr.onPillow?'有人':'无人',fsr.onPillow?'good':'');
+  }
+  if(p===null){
+    updateRow('pressure','枕头气压','等待真实气压回传；不会用假数据代替。','等待','');
+  }else{
+    const saved=Number(cal.saved_kpa);
+    const savedText=Number.isFinite(saved) ? '，已保存 '+saved.toFixed(1)+' kPa' : '';
+    updateRow('pressure','枕头气压','当前 '+p.toFixed(1)+' kPa'+savedText+'。',Math.abs(p-(Number.isFinite(saved)?saved:p))<=0.5?'正常':'偏离',Math.abs(p-(Number.isFinite(saved)?saved:p))<=0.5?'good':'warn');
+  }
+  const envParts=[];
+  if(env.temp!==null)envParts.push('温度 '+env.temp.toFixed(1)+'°');
+  if(env.hum!==null)envParts.push('湿度 '+env.hum.toFixed(0)+'%');
+  if(env.light!==null)envParts.push('光照 '+env.light.toFixed(0)+' lux');
+  if(env.air!==null)envParts.push('空气 '+env.air.toFixed(env.air<10?1:0));
+  updateRow('env','环境状态',envParts.length?envParts.join('；')+'。':'等待温湿度、光照和空气数据。',envParts.length?'已读取':'等待',envParts.length?'good':'');
+  if(radar.valid){
+    const r=[];
+    if(radar.hr!==null)r.push('心率 '+radar.hr.toFixed(0)+' bpm');
+    if(radar.br!==null)r.push('呼吸 '+radar.br.toFixed(0)+' 次/分');
+    updateRow('radar','生命体征',r.join('；')+'。','有效','good');
+  }else{
+    updateRow('radar','生命体征','等待雷达心率 / 呼吸有效数据。','等待','');
+  }
+  const led=(typeof data.led_enabled==='boolean') ? (data.led_enabled?'灯带开':'灯带关') : '灯带未知';
+  const fan=(typeof data.fan_on==='boolean') ? (data.fan_on?'风扇开':'风扇关') : '风扇未知';
+  const humid=(typeof data.humidifier_on==='boolean') ? (data.humidifier_on?'加湿器开':'加湿器关') : '加湿器未知';
+  updateRow('devices','设备状态',[led,fan,humid].join('；')+'。','已读取',Object.keys(data||{}).length?'good':'');
+}
+function applySettings(settings,quietStatus){
+  const defaults=defaultSettings();
+  userSettings=Object.assign(defaults,settings || {});
+  userSettings.personality=Object.assign(defaults.personality,userSettings.personality || {});
+  userSettings.quiet_rules=Object.assign(defaults.quiet_rules,userSettings.quiet_rules || {});
+  userSettings.pillow_calibration=Object.assign(defaults.pillow_calibration,userSettings.pillow_calibration || {});
+  userSettings.alarms=userSettings.alarms || defaults.alarms;
+  const night=getPeriod(userSettings,'night_sleep');
+  const nap=getPeriod(userSettings,'nap');
+  const alarm=getAlarm(userSettings);
+  setValue('settingTone',normalizePersonaMode(userSettings.personality.tone));
+  setValue('settingStyle',userSettings.personality.style);
+  setValue('settingInitiative',userSettings.personality.initiative);
+  setValue('settingDescription',userSettings.personality.description);
+  setChecked('nightEnabled',night.enabled);
+  setValue('nightStart',night.start || '22:30');
+  setValue('nightEnd',night.end || '07:30');
+  setChecked('napEnabled',nap.enabled);
+  setValue('napStart',nap.start || '13:00');
+  setValue('napEnd',nap.end || '14:30');
+  setChecked('blockVoice',userSettings.quiet_rules.block_ai_voice);
+  setChecked('blockLight',userSettings.quiet_rules.block_ai_light);
+  setChecked('blockScreen',userSettings.quiet_rules.block_ai_screen);
+  setChecked('blockPcAgent',userSettings.quiet_rules.block_ai_pc_agent);
+  setChecked('allowPillow',userSettings.quiet_rules.allow_gentle_pillow_adjust);
+  setChecked('allowEnvironment',userSettings.quiet_rules.allow_sleep_environment_control);
+  setChecked('alarmEnabled',alarm.enabled);
+  setValue('alarmTime',alarm.time || '07:30');
+  setValue('alarmRepeat',alarm.repeat || 'daily');
+  setValue('alarmSong',alarm.song_query || '小半');
+  setValue('memoryText',(userSettings.memory || []).join('\n'));
+  updateCalibrationUi(userSettings);
+  updateStatusRows(latestSensorData || {});
+  const sync=document.querySelector('[data-settings-sync]');
+  if(sync)sync.textContent='已同步';
+  updateQuietBadge(quietStatus);
+}
+function collectSettings(){
+  const currentAlarm=getAlarm(userSettings || defaultSettings());
+  const currentCal=(userSettings && userSettings.pillow_calibration) || defaultSettings().pillow_calibration;
+  return {
+    personality:{
+      name:'小安',
+      tone:document.getElementById('settingTone')?.value || 'gentle',
+      style:document.getElementById('settingStyle')?.value || 'short',
+      initiative:document.getElementById('settingInitiative')?.value || 'low',
+      description:document.getElementById('settingDescription')?.value || ''
+    },
+    quiet_periods:[
+      {name:'night_sleep',label:'夜间睡眠',enabled:!!document.getElementById('nightEnabled')?.checked,start:document.getElementById('nightStart')?.value || '22:30',end:document.getElementById('nightEnd')?.value || '07:30'},
+      {name:'nap',label:'午休',enabled:!!document.getElementById('napEnabled')?.checked,start:document.getElementById('napStart')?.value || '13:00',end:document.getElementById('napEnd')?.value || '14:30'}
+    ],
+    quiet_rules:{
+      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
+      block_ai_light:false,
+      block_ai_screen:false,
+      block_ai_pc_agent:false,
+      allow_gentle_pillow_adjust:false,
+      allow_sleep_environment_control:true,
+      alert_method:'phone_only'
+    },
+    pillow_calibration:{
+      saved_kpa:Number(currentCal.saved_kpa ?? 3.2),
+      saved_at:String(currentCal.saved_at || ''),
+      snore_adjust_enabled:currentCal.snore_adjust_enabled !== false
+    },
+    alarms:[{
+      id:currentAlarm.id || 'wake_alarm',
+      enabled:!!document.getElementById('alarmEnabled')?.checked,
+      time:document.getElementById('alarmTime')?.value || '07:30',
+      repeat:document.getElementById('alarmRepeat')?.value || 'daily',
+      song_query:(document.getElementById('alarmSong')?.value || '小半').trim() || '小半',
+      music_stage_seconds:30,leave_confirm_seconds:5,pillow_up_seconds:3,pillow_down_seconds:3,pillow_high_kpa:5,pillow_low_kpa:0.7,
+      last_triggered_key:currentAlarm.last_triggered_key || ''
+    }],
+    memory:(document.getElementById('memoryText')?.value || '').split('\n').map(line=>line.trim()).filter(Boolean).slice(0,20)
+  };
+}
+function pushSettings(settings,toastText='正在保存设置'){
+  userSettings=Object.assign(defaultSettings(),settings || {});
+  updateCalibrationUi(userSettings);
+  const sync=document.querySelector('[data-settings-sync]');
+  const ok=sendAppWs({type:'settings_update',settings});
+  if(ok){
+    if(sync)sync.textContent='保存中';
+    show(toastText);
+    return true;
+  }
+  if(sync)sync.textContent='云端未连接';
+  show('保存失败：云端未连接');
+  return false;
+}
+function saveSettings(){
+  return pushSettings(collectSettings(),'正在保存设置');
+}
+function currentMeasuredPressure(){
+  const p=pressureSummary(latestSensorData || {});
+  return p!==null ? p : latestMeasuredPressure;
+}
+function saveCurrentPillowCalibration(){
+  const p=currentMeasuredPressure();
+  if(p===null || !Number.isFinite(Number(p))){
+    show('当前没有真实气压，不能保存');
+    return false;
+  }
+  const settings=collectSettings();
+  const now=new Date().toISOString();
+  settings.pillow_calibration=Object.assign({},settings.pillow_calibration,{saved_kpa:Number(p.toFixed(1)),saved_at:now});
+  const memory=settings.memory.filter(line=>!/^呼噜干预目标气压[:：]/.test(line) && !/^枕头校准保存气压[:：]/.test(line));
+  memory.push('呼噜干预目标气压：'+Number(p).toFixed(1)+' kPa');
+  settings.memory=memory.slice(-20);
+  setValue('memoryText',settings.memory.join('\n'));
+  updateCalibrationUi(settings);
+  updateStatusRows(latestSensorData || {});
+  return pushSettings(settings,'正在保存当前气压 '+Number(p).toFixed(1)+' kPa');
+}
+function updateTelemetry(payload){
+  if(Object.prototype.hasOwnProperty.call(payload,'esp32_connected')){
+    esp32Connected=!!payload.esp32_connected;
+    setCloudState(cloudConnected,esp32Connected);
+  }
+  const data=flattenSensorData(payload);
+  latestSensorData=data;
+  latestSensorAt=Date.now();
+  const p=pressureSummary(data);
+  if(p!==null){
+    latestMeasuredPressure=p;
+    const v=Number(p).toFixed(1);
+    setPressure(v);
+    setText('[data-live-pressure]',v);
+  }else{
+    setText('[data-live-pressure]','--');
+  }
+  const env=envSummary(data);
+  setText('[data-live-env]',env.temp!==null?env.temp.toFixed(1)+'°':'--');
+  setText('[data-live-humidity]',env.hum!==null?env.hum.toFixed(0)+'% RH':'等待数据');
+  setText('[data-live-air]',env.air!==null?(env.air<10?env.air.toFixed(1):env.air.toFixed(0)):'--');
+  setText('[data-live-light]',env.light!==null?env.light.toFixed(0):'--');
+  if(typeof data.led_enabled==='boolean' || typeof data.led_brightness_pct==='number'){
+    setLedUi(typeof data.led_enabled==='boolean' ? data.led_enabled : ledEnabled, typeof data.led_brightness_pct==='number' ? data.led_brightness_pct : ledBrightnessPct);
+  }
+  if(typeof data.fan_on==='boolean')setIrDeviceUi('fan',data.fan_on);
+  if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
+  buildHomeSummary(data);
+  updateStatusRows(data);
+}
+function sendCommand(text){
+  const t=(text || '').trim();
+  if(!t)return;
+  if(t.includes('保存') || t.includes('校准')){
+    saveCurrentPillowCalibration();
+    return;
+  }
+  if(t.includes('连续升高')){sendPillowCommand('tilt',{duration_sec:600});return;}
+  if(t.includes('连续降低')){sendPillowCommand('recover',{duration_sec:600});return;}
+  if(t.includes('连续停止')){sendPillowCommand('halt',{duration_sec:0});return;}
+  const kpaMatch=t.match(/([0-9]+(?:\.[0-9]+)?)\s*kPa/i);
+  if(kpaMatch || t.includes('目标压力') || t.includes('目标支撑') || t.includes('执行目标')){
+    const target=kpaMatch ? Number(kpaMatch[1]) : currentTargetPressure();
+    setPressure(target);
+    sendPillowCommand('tilt',{target_kpa:target,duration_sec:0});
+    return;
+  }
+  if(t.includes('急停') || t.includes('停止')){sendPillowCommand('stop',{duration_sec:0});return;}
+  if(t.includes('泄压') || t.includes('降低')){sendPillowCommand('recover',{duration_sec:2});return;}
+  if(t.includes('充气') || t.includes('升高')){sendPillowCommand('tilt',{duration_sec:2});return;}
+  sendAiIntent(t);
+}
+
+
+/* task2 real-data wave charts */
+const waveSeries={heart:[],breath:[],motion:[]};
+function pushWavePoint(name,value){
+  const n=Number(value);
+  if(!Number.isFinite(n))return;
+  const arr=waveSeries[name];
+  if(!arr)return;
+  arr.push(n);
+  while(arr.length>72)arr.shift();
+}
+function drawWave(name,canvasId,color){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const g=ctx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,'rgba(255,255,255,.08)');
+  g.addColorStop(1,'rgba(255,255,255,.015)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='rgba(255,255,255,.12)';ctx.lineWidth=1;
+  for(let i=1;i<3;i++){const y=h*i/3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+  const data=waveSeries[name];
+  if(!data.length){
+    ctx.strokeStyle='rgba(255,255,255,.18)';ctx.setLineDash([5,7]);ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();ctx.setLineDash([]);return;
+  }
+  const min=Math.min(...data),max=Math.max(...data); const pad=(max-min)||1;
+  ctx.strokeStyle=color;ctx.lineWidth=2.2;ctx.beginPath();
+  data.forEach((v,i)=>{const x=data.length===1?w: i*(w/(data.length-1)); const y=h-8-((v-min)/pad)*(h-16); if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);});
+  ctx.stroke();
+  ctx.globalAlpha=.16;ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=color;ctx.fill();ctx.globalAlpha=1;
+}
+function updateWaveCharts(data){
+  const radar=radarSummary(data||{});
+  const motion=pickNumber(data||{},['body_motion','body_movement','motion','motion_level','radar_motion','activity','movement']);
+  if(radar.hr!==null){pushWavePoint('heart',radar.hr);setText('[data-wave-value="heart"]',radar.hr.toFixed(0)+' bpm');}
+  if(radar.br!==null){pushWavePoint('breath',radar.br);setText('[data-wave-value="breath"]',radar.br.toFixed(0)+' 次/分');}
+  if(motion!==null){pushWavePoint('motion',motion);setText('[data-wave-value="motion"]',motion.toFixed(motion<10?1:0));}
+  drawWave('heart','heartWave','#82e7ff');
+  drawWave('breath','breathWave','#8cf0d0');
+  drawWave('motion','motionWave','#ffd86f');
+}
+
+
+/* task2 simplified home/status overrides */
+function buildHomeSummary(data){
+  const fsr=fsrSummary(data||{});
+  const hasAny=Object.keys(data||{}).length>0;
+  const title=document.querySelector('[data-home-title]');
+  const subtitle=document.querySelector('[data-home-subtitle]');
+  const presence=document.querySelector('[data-pillow-presence]');
+  const insightTitle=document.querySelector('[data-home-insight-title]');
+  const insightDetail=document.querySelector('[data-home-insight-detail]');
+  const text=fsr.onPillow===null?(hasAny?'等待 FSR':'等待数据'):(fsr.onPillow?'枕上有人':'枕上无人');
+  if(title)title.textContent=fsr.onPillow===true?'枕上有人，正在守护睡眠':fsr.onPillow===false?'枕上无人，等待上枕':'等待主控数据';
+  if(subtitle)subtitle.textContent='';
+  if(presence)presence.innerHTML='<i data-lucide="activity"></i>'+text;
+  if(insightTitle)insightTitle.textContent='小安判断：'+(fsr.onPillow===true?'有人在枕上':fsr.onPillow===false?'当前未上枕':'等待传感器');
+  if(insightDetail)insightDetail.textContent=fsr.max!==null?'FSR 最大压力 '+fsr.max.toFixed(2)+' N。':'等待真实 FSR 压力数据。';
+  installIcons();
+}
+function updateStatusRows(data){
+  const snore=snoreSummary(data||{});
+  const radar=radarSummary(data||{});
+  if(snore){
+    const parts=[];
+    if(snore.score!==null)parts.push('置信度 ' + snore.score.toFixed(2));
+    if(snore.target_kpa!==null)parts.push('目标气压 ' + snore.target_kpa.toFixed(1) + ' kPa');
+    if(snore.received_at)parts.push('时间 ' + fmtTime(snore.received_at));
+    updateRow('snore','鼾声干预',parts.join('；') + '。',snore.adjusted===false?'已检测':'已干预',snore.adjusted===false?'warn':'good');
+  }else{
+    updateRow('snore','鼾声干预','睡眠期间由 ESP32-S3 本地检测，触发后自动充气侧偏。','待命','');
+  }
+  if(radar.valid){
+    const r=[]; if(radar.hr!==null)r.push('心率 '+radar.hr.toFixed(0)+' bpm'); if(radar.br!==null)r.push('呼吸 '+radar.br.toFixed(0)+' 次/分');
+    updateRow('radar','生命体征',r.join('；')+'。','有效','good');
+  }else{
+    updateRow('radar','生命体征','等待雷达心率 / 呼吸有效数据。','等待','');
+  }
+  const led=(typeof data.led_enabled==='boolean') ? (data.led_enabled?'灯带开':'灯带关') : '灯带未知';
+  const fan=(typeof data.fan_on==='boolean') ? (data.fan_on?'风扇开':'风扇关') : '风扇未知';
+  const humid=(typeof data.humidifier_on==='boolean') ? (data.humidifier_on?'加湿器开':'加湿器关') : '加湿器未知';
+  updateRow('devices','设备状态',[led,fan,humid].join('；')+'。',Object.keys(data||{}).length?'已读取':'等待',Object.keys(data||{}).length?'good':'');
+  updateWaveCharts(data||{});
+}
+function updateTelemetry(payload){
+  if(Object.prototype.hasOwnProperty.call(payload,'esp32_connected')){esp32Connected=!!payload.esp32_connected;setCloudState(cloudConnected,esp32Connected);}
+  const data=flattenSensorData(payload); latestSensorData=data; latestSensorAt=Date.now();
+  if(data.last_snore_event && typeof data.last_snore_event==='object')latestSnoreEvent=data.last_snore_event;
+  const p=pressureSummary(data); if(p!==null){latestMeasuredPressure=p; const v=Number(p).toFixed(1); setPressure(v); setText('[data-live-pressure]',v);} else {setText('[data-live-pressure]','--');}
+  const env=envSummary(data); setText('[data-live-env]',env.temp!==null?env.temp.toFixed(1)+'°':'--'); setText('[data-live-humidity]',env.hum!==null?env.hum.toFixed(0)+'% RH':'等待数据'); setText('[data-live-air]',env.air!==null?(env.air<10?env.air.toFixed(1):env.air.toFixed(0)):'--'); setText('[data-live-light]',env.light!==null?env.light.toFixed(0):'--');
+  if(typeof data.led_enabled==='boolean' || typeof data.led_brightness_pct==='number')setLedUi(typeof data.led_enabled==='boolean'?data.led_enabled:ledEnabled,typeof data.led_brightness_pct==='number'?data.led_brightness_pct:ledBrightnessPct);
+  if(typeof data.fan_on==='boolean')setIrDeviceUi('fan',data.fan_on); if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
+  buildHomeSummary(data); updateStatusRows(data);
+}
+function installPillowHoldControls(){return;}
+
+function activatePage(id){
+  const appEl=document.querySelector('.app');
+  appEl?.classList.toggle('home-active',id==='home');
+  appEl?.classList.toggle('settings-active',id==='settings');
+  appEl?.classList.toggle('control-active',id==='control');
+  pages.forEach(page=>page.classList.toggle('active',page.id===id));
+  tabs.forEach(tab=>tab.classList.toggle('active',tab.dataset.tab===id));
+  document.querySelectorAll('[data-open-settings]').forEach(btn=>{
+    btn.classList.toggle('active',id==='settings');
+  });
+}
+tabs.forEach(tab=>{
+  tab.addEventListener('click',()=>activatePage(tab.dataset.tab));
+});
+document.querySelectorAll('[data-open-settings]').forEach(btn=>{
+  btn.addEventListener('click',()=>activatePage('settings'));
+});
+pressureInputs.forEach(input=>{
+  input.addEventListener('input',e=>setPressure(e.target.value));
+  input.addEventListener('change',e=>sendCommand('目标压力 ' + Number(e.target.value).toFixed(1) + ' kPa'));
+});
+document.querySelectorAll('[data-adjust]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const current=Number(pressureInputs[0].value || 3.2);
+    const next=current + Number(btn.dataset.adjust);
+    setPressure(next);
+    sendCommand('目标压力 ' + Number(pressureInputs[0].value).toFixed(1) + ' kPa');
+  });
+});
+document.querySelectorAll('[data-cmd]').forEach(btn=>{
+  btn.addEventListener('click',()=>sendCommand(btn.dataset.cmd));
+});
+document.querySelectorAll('[data-ir-device]').forEach(btn=>{
+  btn.addEventListener('click',()=>sendIrCommand(btn.dataset.irDevice,btn.dataset.irAction || 'toggle'));
+});
+document.querySelectorAll('[data-led-action]').forEach(btn=>{
+  btn.addEventListener('click',()=>sendLedCommand(btn.dataset.ledAction,ledBrightnessPct || 22));
+});
+const ledBrightnessInput=document.getElementById('ledBrightness');
+if(ledBrightnessInput){
+  ledBrightnessInput.addEventListener('input',event=>scheduleLedBrightness(event.target.value));
+  ledBrightnessInput.addEventListener('change',event=>{
+    clearTimeout(ledSendTimer);
+    sendLedCommand('set',event.target.value);
+  });
+}
+function installPillowHoldControls(){return;}
+document.getElementById('homeSend').addEventListener('click',()=>{
+  const input=document.getElementById('homeInput');
+  sendCommand(input.value);
+  input.value='';
+});
+document.getElementById('aiSend').addEventListener('click',()=>{
+  const input=document.getElementById('aiInput');
+  const text=input.value.trim();
+  if(!text)return;
+  const chat=document.getElementById('chat');
+  const mine=document.createElement('div');
+  mine.className='bubble me';
+  mine.textContent=text;
+  chat.appendChild(mine);
+  const reply=document.createElement('div');
+  reply.className='bubble';
+  reply.textContent='收到。我会先判断安全条件，再把指令同步给家中主控和 LCD 屏幕。';
+  chat.appendChild(reply);
+  input.value='';
+  show('AI 指令已进入队列');
+});
+const oldAiSend=document.getElementById('aiSend');
+const realAiSend=oldAiSend.cloneNode(true);
+oldAiSend.replaceWith(realAiSend);
+realAiSend.addEventListener('click',sendAiChatText);
+document.getElementById('aiInput').addEventListener('keydown',event=>{
+  if(event.key==='Enter'){
+    event.preventDefault();
+    sendAiChatText();
+  }
+});
+// PC Agent task handler is installed below.
+
+// open-pc-agent handler
+try{document.querySelectorAll('[data-open-pc-agent]').forEach(btn=>btn.addEventListener('click',()=>activatePage('ai')));}catch(e){}
+
+
+
+
+
+const MCP_CODE_DEFAULT_CONFIG={
+  alarm:'默认：云端闹钟 / 音乐 + 枕头联动',
+  music:'默认：NETEASE_COOKIE（云端 .env）',
+  mail:'默认：imap.163.com / EMAIL_USER / EMAIL_PASS',
+  didi:'默认：DIDI_MCP_KEY / taxi_generate_ride_app_link'
+};
+const MCP_SERVICE_BADGE_DEFAULT={
+  alarm:'点击设置',
+  music:'填入 Cookie',
+  mail:'填入邮箱',
+  didi:'填入 Key'
+};
+const MCP_SERVICE_PANEL_COPY={
+  music:{title:'音乐配置',subtitle:'请填入您的网易云 Cookie；不填则使用默认配置'},
+  mail:{title:'邮件配置',subtitle:'请填入您的邮箱账号 / IMAP 应用密码；不填则使用默认配置'},
+  didi:{title:'滴滴打车配置',subtitle:'请填入您的 DiDi MCP Key；不填则使用默认配置'}
+};
+function readMcpUserConfig(){
+  try{return JSON.parse(localStorage.getItem('xiaoan_mcp_user_config') || '{}') || {};}catch(e){return {};}
+}
+function writeMcpUserConfig(cfg){
+  try{localStorage.setItem('xiaoan_mcp_user_config',JSON.stringify(cfg));}catch(e){}
+}
+function isMcpDefaultValue(key,value){
+  return !value || value===MCP_CODE_DEFAULT_CONFIG[key] || /^已接入：/.test(String(value||''));
+}
+function updateMcpConfigUi(cfg){
+  const map={music:'mcpMusicAuth',mail:'mcpMailAuth',didi:'mcpDidiAuth'};
+  Object.entries(map).forEach(([key,id])=>{
+    const input=document.getElementById(id);
+    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
+    const userValue=isMcpDefaultValue(key,raw) ? '' : raw;
+    if(input && document.activeElement!==input)input.value=userValue;
+  });
+  ['alarm','music','mail','didi'].forEach(key=>{
+    const raw=(cfg && cfg[key]) ? String(cfg[key]).trim() : '';
+    const userConfigured=!isMcpDefaultValue(key,raw);
+    document.querySelectorAll('[data-mcp-config-state="' + key + '"]').forEach(el=>{
+      el.textContent=userConfigured ? '用户已配置' : (MCP_SERVICE_BADGE_DEFAULT[key] || '点击配置');
+      el.classList.toggle('good',userConfigured);
+    });
+  });
+}
+function openMcpServicePanel(service, shouldScroll){
+  const alarmPanel=document.getElementById('serviceAlarmPanel');
+  const configPanel=document.getElementById('mcpConfigPanel');
+  document.querySelectorAll('[data-mcp-service]').forEach(card=>card.classList.toggle('is-active',card.dataset.mcpService===service));
+  if(service==='alarm'){
+    if(configPanel)configPanel.classList.remove('is-open');
+    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.remove('is-active'));
+    if(alarmPanel)alarmPanel.classList.add('is-open');
+    if(shouldScroll && alarmPanel)alarmPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+    return;
+  }
+  if(alarmPanel)alarmPanel.classList.remove('is-open');
+  if(configPanel){
+    const copy=MCP_SERVICE_PANEL_COPY[service] || {title:'服务配置',subtitle:'请填入您的授权信息；不填则使用默认配置'};
+    const title=configPanel.querySelector('[data-mcp-config-title]');
+    const subtitle=configPanel.querySelector('[data-mcp-config-subtitle]');
+    if(title)title.textContent=copy.title;
+    if(subtitle)subtitle.textContent=copy.subtitle;
+    configPanel.classList.add('is-open');
+    document.querySelectorAll('[data-mcp-config-section]').forEach(el=>el.classList.toggle('is-active',el.dataset.mcpConfigSection===service));
+    if(shouldScroll)configPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+}
+function saveMcpUserConfig(){
+  const cfg={
+    alarm:'',
+    music:(document.getElementById('mcpMusicAuth')?.value || '').trim(),
+    mail:(document.getElementById('mcpMailAuth')?.value || '').trim(),
+    didi:(document.getElementById('mcpDidiAuth')?.value || '').trim(),
+    updated_at:new Date().toISOString()
+  };
+  writeMcpUserConfig(cfg);
+  updateMcpConfigUi(cfg);
+  sendAppWs({type:'mcp_user_config',configured:{alarm:true,music:true,mail:true,didi:true},user_configured:{alarm:false,music:!isMcpDefaultValue('music',cfg.music),mail:!isMcpDefaultValue('mail',cfg.mail),didi:!isMcpDefaultValue('didi',cfg.didi)},session_id:APP_SESSION_ID});
+  show('配置已保存；留空项使用默认配置');
+}
+function sendPcAgentTaskFromControl(){
+  const input=document.getElementById('pcInput');
+  if(!input)return;
+  const text=(input.value || '').trim();
+  if(!text)return;
+  const cfg=readMcpUserConfig();
+  const requestId='mcp-task-' + Date.now() + '-' + Math.floor(Math.random()*10000);
+  const chat=document.getElementById('pcChat');
+  let reply=null;
+  if(chat){
+    const mine=document.createElement('div');
+    mine.className='bubble me';
+    mine.textContent=text;
+    chat.appendChild(mine);
+    reply=document.createElement('div');
+    reply.className='bubble';
+    reply.textContent='PC Agent 已收到，正在通过 MCP 工具编排任务...';
+    chat.appendChild(reply);
+    appChatReplies.set(requestId,reply);
+    chat.scrollTop=chat.scrollHeight;
+  }
+  input.value='';
+  const ok=sendAppWs({
+    type:'pc_agent_task',
+    text,
+    request_id:requestId,
+    session_id:APP_SESSION_ID + '-mcp',
+    configured:{alarm:true,music:true,mail:true,didi:true},
+    user_configured:{
+      alarm:!isMcpDefaultValue('alarm',cfg.alarm),
+      music:!isMcpDefaultValue('music',cfg.music),
+      mail:!isMcpDefaultValue('mail',cfg.mail),
+      didi:!isMcpDefaultValue('didi',cfg.didi)
+    }
+  });
+  if(!ok){
+    if(reply){
+      reply.textContent='发送失败：云端未连接';
+      appChatReplies.delete(requestId);
+    }
+    show('发送失败：云端未连接');
+    return;
+  }
+  show('PC Agent 任务已下发');
+}
+function installMcpUserConfigControls(){
+  updateMcpConfigUi(readMcpUserConfig());
+  const saveBtn=document.getElementById('mcpConfigSave');
+  if(saveBtn && !saveBtn.dataset.boundMcpConfig){saveBtn.dataset.boundMcpConfig='1';saveBtn.addEventListener('click',saveMcpUserConfig);}
+  document.querySelectorAll('[data-mcp-service]').forEach(card=>{
+    if(card.dataset.boundMcpCard)return;
+    card.dataset.boundMcpCard='1';
+    const open=()=>openMcpServicePanel(card.dataset.mcpService,true);
+    card.addEventListener('click',open);
+    card.addEventListener('keydown',event=>{if(event.key==='Enter' || event.key===' '){event.preventDefault();open();}});
+  });
+  const pcSendBtn=document.getElementById('pcSend');
+  if(pcSendBtn && !pcSendBtn.dataset.boundPcTask){pcSendBtn.dataset.boundPcTask='1';pcSendBtn.addEventListener('click',sendPcAgentTaskFromControl);}
+  const pcTaskInput=document.getElementById('pcInput');
+  if(pcTaskInput && !pcTaskInput.dataset.boundPcTask){pcTaskInput.dataset.boundPcTask='1';pcTaskInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();sendPcAgentTaskFromControl();}});}
+}
+
+const settingToneSelect=document.getElementById('settingTone');
+if(settingToneSelect){
+  settingToneSelect.addEventListener('change',event=>applyPersonaPreset(event.target.value,false));
+}
+const settingsSave=document.getElementById('settingsSave');
+if(settingsSave){
+  settingsSave.addEventListener('click',saveSettings);
+}
+const alarmSaveBtn=document.getElementById('alarmSaveBtn');
+if(alarmSaveBtn){
+  alarmSaveBtn.addEventListener('click',saveSettings);
+}
+applySettings(defaultSettings(),null);
+connectAppWs();
+bindAvatarWorkshop();
+installPillowHoldControls();
+installMcpUserConfigControls();
+installIcons();
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
