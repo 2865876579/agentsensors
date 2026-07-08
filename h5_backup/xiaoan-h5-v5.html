@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -3553,7 +3553,7 @@ function fsrSummary(data){
   }
   ['fsr1_n','fsr2_n','fsr3_n','fsr4_n','fsr_1_n','fsr_2_n','fsr_3_n','fsr_4_n','fsr1','fsr2','fsr3','fsr4','fsr0','fsr_0'].forEach(k=>add(data[k],true));
   const max=values.length ? Math.max(...values) : null;
-  return {values,max,onPillow:max===null ? null : max>1.0};
+  return {values,max,onPillow:max===null ? null : max>=0.05};
 }
 function envSummary(data){
   const temp=pickNumber(data,['temperature_c','temp_c','sht31_temp_c','temperature']);
@@ -3644,7 +3644,7 @@ function updateStatusRows(data){
   if(fsr.onPillow===null){
     updateRow('pillow','枕上状态','等待 FSR402 压力数据。','等待','');
   }else{
-    updateRow('pillow','枕上状态','FSR 最大压力 '+(fsr.max||0).toFixed(2)+' N；阈值 > 1.0 N 判定有人。',fsr.onPillow?'有人':'无人',fsr.onPillow?'good':'');
+    updateRow('pillow','枕上状态','FSR 最大压力 '+(fsr.max||0).toFixed(2)+' N；阈值 >= 0.05 N 判定有人。',fsr.onPillow?'有人':'无人',fsr.onPillow?'good':'');
   }
   if(p===null){
     updateRow('pressure','枕头气压','等待真实气压回传；不会用假数据代替。','等待','');
@@ -4177,6 +4177,7 @@ installIcons();
 </script>
 </body>
 </html>
+
 
 
 
