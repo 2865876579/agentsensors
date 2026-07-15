@@ -31,7 +31,10 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import time
 import urllib.parse
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from config import SERVER_HOST, SERVER_PORT
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
@@ -1780,6 +1783,35 @@ async def health():
         "has_sensor_data": latest_sensor_data is not None,
         "version": APP_VERSION,
     }
+
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+WEB_ASSETS = {
+    "lucide.min.js": "application/javascript; charset=utf-8",
+    "xiaoan-bedroom.jpg": "image/jpeg",
+    "xiaoan-device.png": "image/png",
+}
+
+
+def web_response(filename: str, media_type: str) -> FileResponse:
+    path = WEB_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="web asset not found")
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/")
+@app.get("/app")
+async def app_control_page():
+    return web_response("index.html", "text/html; charset=utf-8")
+
+
+@app.get("/assets/{filename}")
+async def app_control_asset(filename: str):
+    media_type = WEB_ASSETS.get(filename)
+    if not media_type:
+        raise HTTPException(status_code=404, detail="web asset not found")
+    return web_response(filename, media_type)
 
 
 if __name__ == "__main__":

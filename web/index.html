@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171a18">
+  <title>小安睡眠中控</title>
+  <link rel="icon" href="/assets/xiaoan-device.png">
+  <script src="/assets/lucide.min.js"></script>
+  <style>
+    :root{color-scheme:dark;--bg:#111412;--panel:#1b1f1c;--panel2:#222722;--line:#343b35;--text:#f4f6f2;--muted:#a6afa7;--green:#83d6a0;--cyan:#6fc9d1;--amber:#e9bd6c;--red:#f17872}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;letter-spacing:0}
+    button,input,select,textarea{font:inherit;letter-spacing:0}button{cursor:pointer}.app{width:min(1180px,100%);margin:auto;padding:18px 18px 92px}
+    header{height:58px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);margin-bottom:18px}
+    .brand{display:flex;align-items:center;gap:11px}.mark{width:34px;height:34px;display:grid;place-items:center;background:var(--green);color:#102116;border-radius:7px}.brand strong{font-size:18px}.brand span{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+    .head-actions{display:flex;align-items:center;gap:8px}.status{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:#687169}.status.online .dot{background:var(--green);box-shadow:0 0 0 4px rgba(131,214,160,.12)}
+    .icon-btn{width:38px;height:38px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:6px;display:grid;place-items:center}.icon-btn i{width:18px}
+    .layout{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(350px,.92fr);gap:18px}.stack{display:grid;gap:18px;align-content:start}
+    .scene{position:relative;min-height:340px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#242824 url('/assets/xiaoan-bedroom.jpg') center/cover no-repeat}.scene:before{content:"";position:absolute;inset:0;background:rgba(9,12,10,.56)}
+    .scene-copy{position:relative;z-index:1;padding:24px;max-width:520px}.eyebrow{font-size:11px;color:var(--green);font-weight:700}.scene h1{font-size:28px;margin:8px 0 7px}.scene p{margin:0;color:#d1d6d1;font-size:13px;line-height:1.6}.device-img{position:absolute;right:12px;bottom:-15px;width:min(49%,320px);max-height:260px;object-fit:contain;filter:drop-shadow(0 18px 20px rgba(0,0,0,.36))}
+    .pressure{position:absolute;z-index:2;left:24px;right:24px;bottom:20px;background:rgba(24,29,25,.92);border:1px solid rgba(255,255,255,.16);border-radius:7px;padding:14px;backdrop-filter:blur(10px)}
+    .pressure-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}.pressure-label{color:var(--muted);font-size:11px}.pressure-value{font-size:27px;font-weight:800}.pressure-value small{font-size:12px;color:var(--muted)}.target{font-size:12px;color:var(--cyan)}
+    input[type=range]{width:100%;accent-color:var(--green);margin:11px 0 8px}.quick{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px}.cmd{height:40px;border:1px solid var(--line);background:#2a302b;color:var(--text);border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-weight:700;font-size:12px}.cmd i{width:16px}.cmd.primary{background:var(--green);border-color:var(--green);color:#102116}.cmd.danger{background:rgba(241,120,114,.12);border-color:rgba(241,120,114,.45);color:#ffaaa5}
+    .section{border-top:1px solid var(--line);padding-top:14px}.section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}.section-title h2{font-size:14px;margin:0}.section-title span{font-size:10px;color:var(--muted)}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.metric{min-height:88px;border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:12px}.metric .name{color:var(--muted);font-size:10px}.metric strong{display:block;font-size:21px;margin:8px 0 2px}.metric small{font-size:10px;color:var(--muted)}
+    .controls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.control{height:126px;border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:12px;display:flex;flex-direction:column;justify-content:space-between}.control-head{display:flex;align-items:center;justify-content:space-between}.control-name{display:flex;align-items:center;gap:7px;font-size:12px}.control-name i{width:17px;color:var(--cyan)}.state{font-size:11px;color:var(--muted)}
+    .segments{display:grid;grid-template-columns:1fr 1fr;gap:5px}.segments button{height:32px;border:1px solid var(--line);background:#262c27;color:var(--muted);border-radius:5px}.segments button.active{background:var(--cyan);border-color:var(--cyan);color:#102024;font-weight:700}.brightness{display:grid;grid-template-columns:1fr 34px;align-items:center;gap:7px}.brightness input{margin:0}.brightness output{font-size:10px;color:var(--amber);text-align:right}
+    .chat{border:1px solid var(--line);background:var(--panel);border-radius:8px;overflow:hidden}.chat-head{height:48px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.chat-head strong{font-size:13px}.chat-head span{font-size:10px;color:var(--muted)}.messages{height:248px;overflow:auto;padding:13px;display:flex;flex-direction:column;gap:9px}.bubble{max-width:84%;padding:9px 11px;background:#292f2a;border-radius:7px;font-size:12px;line-height:1.55;white-space:pre-wrap}.bubble.me{align-self:flex-end;background:#315b43}.chat-input{display:grid;grid-template-columns:1fr 42px;gap:7px;padding:10px;border-top:1px solid var(--line)}.chat-input input{min-width:0;height:40px;border:1px solid var(--line);background:#141815;color:var(--text);border-radius:6px;padding:0 11px;outline:none}.chat-input button{border:0;background:var(--green);color:#102116;border-radius:6px;display:grid;place-items:center}.chat-input i{width:18px}
+    .empty{color:var(--muted);font-size:11px}.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,24px);opacity:0;background:#f0f4ef;color:#182019;padding:10px 14px;border-radius:6px;font-size:12px;transition:.18s;z-index:20}.toast.show{opacity:1;transform:translate(-50%,0)}
+    dialog{width:min(480px,calc(100% - 28px));border:1px solid var(--line);border-radius:8px;background:#1b1f1c;color:var(--text);padding:0}dialog::backdrop{background:rgba(0,0,0,.68)}.dialog-head{height:56px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.dialog-head h2{font-size:15px}.settings{padding:16px;display:grid;gap:15px}.field{display:grid;gap:7px}.field label{font-size:11px;color:var(--muted)}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);background:#111412;color:var(--text);border-radius:5px;padding:9px}.field textarea{height:78px;resize:vertical}.period{display:grid;grid-template-columns:auto 1fr 1fr;gap:8px;align-items:end}.period input[type=checkbox]{width:18px;height:18px;accent-color:var(--green);margin-bottom:10px}.save{height:42px;border:0;border-radius:6px;background:var(--green);color:#102116;font-weight:800}
+    @media(max-width:850px){.layout{grid-template-columns:1fr}.scene{min-height:390px}.metrics{grid-template-columns:repeat(4,1fr)}}
+    @media(max-width:560px){.app{padding:10px 10px 82px}header{margin-bottom:10px}.brand span{display:none}.status span{display:none}.scene{min-height:430px}.scene-copy{padding:18px}.scene h1{font-size:23px}.device-img{width:58%;bottom:82px}.pressure{left:10px;right:10px;bottom:10px}.quick{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr 1fr}.controls{grid-template-columns:1fr 1fr}.control:first-child{grid-column:1/-1}.period{grid-template-columns:auto 1fr 1fr}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><div class="mark"><i data-lucide="moon-star"></i></div><div><strong>小安睡眠中控</strong><span>枕头与卧室实时控制</span></div></div>
+    <div class="head-actions"><div class="status" id="cloudStatus"><i class="dot"></i><span>正在连接</span></div><button class="icon-btn" id="refreshBtn" title="刷新传感器"><i data-lucide="refresh-cw"></i></button><button class="icon-btn" id="settingsBtn" title="设置"><i data-lucide="settings"></i></button></div>
+  </header>
+  <main class="layout">
+    <div class="stack">
+      <section class="scene">
+        <div class="scene-copy"><div class="eyebrow" id="presenceText">等待设备数据</div><h1>枕头支撑控制</h1><p id="sceneSummary">正在连接云端与 ESP32 主控。</p></div>
+        <img class="device-img" src="/assets/xiaoan-device.png" alt="小安智能枕头">
+        <div class="pressure">
+          <div class="pressure-head"><div><div class="pressure-label">当前气压</div><div class="pressure-value"><span id="pressureNow">--</span> <small>kPa</small></div></div><div class="target">目标 <b id="targetText">3.2</b> kPa</div></div>
+          <input id="pressureTarget" type="range" min="0" max="5" step="0.1" value="3.2" aria-label="目标气压">
+          <div class="quick"><button class="cmd primary" data-pillow="target"><i data-lucide="gauge"></i>调到目标</button><button class="cmd" data-pillow="tilt"><i data-lucide="arrow-up"></i>升高</button><button class="cmd" data-pillow="recover"><i data-lucide="arrow-down"></i>降低</button><button class="cmd danger" data-pillow="stop"><i data-lucide="octagon-x"></i>急停</button></div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-title"><h2>实时状态</h2><span id="dataTime">等待回传</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="name">温度</div><strong id="temperature">--</strong><small>°C</small></div>
+          <div class="metric"><div class="name">湿度</div><strong id="humidity">--</strong><small>% RH</small></div>
+          <div class="metric"><div class="name">光照</div><strong id="light">--</strong><small>lux</small></div>
+          <div class="metric"><div class="name">空气质量</div><strong id="air">--</strong><small>ppm</small></div>
+          <div class="metric"><div class="name">心率</div><strong id="heart">--</strong><small>bpm</small></div>
+          <div class="metric"><div class="name">呼吸</div><strong id="breath">--</strong><small>次/分</small></div>
+          <div class="metric"><div class="name">FSR 最大压力</div><strong id="fsr">--</strong><small>N</small></div>
+          <div class="metric"><div class="name">设备状态</div><strong id="deviceState">离线</strong><small>ESP32</small></div>
+        </div>
+      </section>
+    </div>
+    <div class="stack">
+      <section class="section">
+        <div class="section-title"><h2>卧室设备</h2><span>云端下发，本地执行</span></div>
+        <div class="controls">
+          <div class="control"><div class="control-head"><div class="control-name"><i data-lucide="lightbulb"></i>灯带</div><span class="state" id="ledState">--</span></div><div class="brightness"><input id="ledBrightness" type="range" min="5" max="100" step="5" value="20" aria-label="灯带亮度"><output id="ledOutput">20%</output></div><div class="segments"><button data-led="on">开</button><button data-led="off">关</button></div></div>
+          <div class="control"><div class="control-head"><div class="control-name"><i data-lucide="fan"></i>风扇</div><span class="state" id="fanState">--</span></div><div class="segments"><button data-ir="fan:on">开</button><button data-ir="fan:off">关</button></div></div>
+          <div class="control"><div class="control-head"><div class="control-name"><i data-lucide="droplets"></i>加湿器</div><span class="state" id="humidifierState">--</span></div><div class="segments"><button data-ir="humidifier:on">开</button><button data-ir="humidifier:off">关</button></div></div>
+        </div>
+      </section>
+      <section class="chat">
+        <div class="chat-head"><strong>小安对话</strong><span>云端 AI</span></div>
+        <div class="messages" id="messages"><div class="bubble">我已连接睡眠中控，可以读取状态或控制当前设备。</div></div>
+        <div class="chat-input"><input id="chatText" placeholder="输入消息" autocomplete="off"><button id="sendBtn" title="发送"><i data-lucide="send-horizontal"></i></button></div>
+      </section>
+    </div>
+  </main>
+</div>
+<dialog id="settingsDialog">
+  <div class="dialog-head"><h2>睡眠设置</h2><button class="icon-btn" id="closeSettings" title="关闭"><i data-lucide="x"></i></button></div>
+  <div class="settings">
+    <div class="field"><label for="tone">小安性格</label><select id="tone"><option value="gentle">温柔陪伴</option><option value="pro">专业健康</option><option value="short">简短助手</option><option value="sleep">睡眠守护</option></select></div>
+    <div class="field"><label for="description">表达偏好</label><textarea id="description"></textarea></div>
+    <div class="field"><label>夜间勿扰</label><div class="period"><input id="nightEnabled" type="checkbox"><input id="nightStart" type="time"><input id="nightEnd" type="time"></div></div>
+    <div class="field"><label>午休勿扰</label><div class="period"><input id="napEnabled" type="checkbox"><input id="napStart" type="time"><input id="napEnd" type="time"></div></div>
+    <button class="save" id="saveSettings">保存到云端</button>
+  </div>
+</dialog>
+<div class="toast" id="toast"></div>
+<script>
+  const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+  const wsUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws/app';
+  let ws, reconnectTimer, settings={}, ledOn=false, fanOn=false, humidifierOn=false, lastPressure=null;
+  const replies=new Map();
+  const num=(o,keys)=>{for(const k of keys){const v=o?.[k];if(v!==undefined&&v!==null&&v!==''&&Number.isFinite(Number(v)))return Number(v)}return null};
+  const fmt=(v,d=1)=>v===null?'--':v.toFixed(d);
+  function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(el.t);el.t=setTimeout(()=>el.classList.remove('show'),1800)}
+  function send(data){if(!ws||ws.readyState!==WebSocket.OPEN){toast('云端未连接');return false}ws.send(JSON.stringify(data));return true}
+  function setOnline(cloud,device){const s=$('#cloudStatus');s.classList.toggle('online',cloud);s.querySelector('span').textContent=cloud?(device?'设备在线':'云端在线'):'连接中';$('#deviceState').textContent=device?'在线':'离线'}
+  function sensorObject(payload){const latest=payload?.latest||payload||{};return latest.data||payload?.data||latest||{}}
+  function fsrMax(d){const vals=[];(d.fsr||d.fsr402||[]).forEach(x=>{const v=typeof x==='object'?num(x,['n','force_n','value','raw']):Number(x);if(Number.isFinite(v)&&x?.valid!==false)vals.push(v)});['fsr1_n','fsr2_n','fsr3_n','fsr4_n','fsr1','fsr2','fsr3','fsr4'].forEach(k=>{const v=Number(d[k]);if(Number.isFinite(v))vals.push(v)});return vals.length?Math.max(...vals):null}
+  function updateSensors(payload){const d=sensorObject(payload), p=num(d,['pressure_kpa','pillow_pressure_kpa','current_kpa','air_kpa']), temp=num(d,['temperature_c','temp_c','sht31_temp_c','temperature']), hum=num(d,['humidity_pct','humidity','rh']), lux=num(d,['light_lux','lux','bh1750_lux']), air=num(d,['mq135_ppm','air_ppm','air_quality']), heart=num(d,['heart_rate_bpm','hr_bpm','heart_rate','hr']), breath=num(d,['breath_rate_bpm','br_bpm','breath_rate','br']), fsr=fsrMax(d);
+    lastPressure=p;$('#pressureNow').textContent=fmt(p);$('#temperature').textContent=fmt(temp);$('#humidity').textContent=fmt(hum,0);$('#light').textContent=fmt(lux,0);$('#air').textContent=fmt(air,1);$('#heart').textContent=fmt(heart,0);$('#breath').textContent=fmt(breath,0);$('#fsr').textContent=fmt(fsr,2);$('#dataTime').textContent=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const occupied=fsr===null?null:fsr>=.1;$('#presenceText').textContent=occupied===null?'等待 FSR 数据':occupied?'枕上有人':'枕上无人';$('#sceneSummary').textContent=[p!==null?`气压 ${p.toFixed(1)} kPa`:null,temp!==null?`温度 ${temp.toFixed(1)} °C`:null,hum!==null?`湿度 ${hum.toFixed(0)}%`:null].filter(Boolean).join(' · ')||'传感器数据等待回传';
+    if(typeof d.led_enabled==='boolean')ledOn=d.led_enabled;if(typeof d.fan_on==='boolean')fanOn=d.fan_on;if(typeof d.humidifier_on==='boolean')humidifierOn=d.humidifier_on;if(num(d,['led_brightness_pct'])!==null){$('#ledBrightness').value=num(d,['led_brightness_pct']);$('#ledOutput').value=$('#ledBrightness').value+'%'}updateSwitches()}
+  function updateSwitches(){$('#ledState').textContent=ledOn?'开':'关';$('#fanState').textContent=fanOn?'开':'关';$('#humidifierState').textContent=humidifierOn?'开':'关';$$('[data-led]').forEach(b=>b.classList.toggle('active',(b.dataset.led==='on')===ledOn));$$('[data-ir]').forEach(b=>{const [dev,act]=b.dataset.ir.split(':');const on=dev==='fan'?fanOn:humidifierOn;b.classList.toggle('active',(act==='on')===on)})}
+  function applySettings(s){settings=s||settings;const p=settings.personality||{};$('#tone').value=p.tone||'gentle';$('#description').value=p.description||'';const periods=settings.quiet_periods||[];for(const [name,prefix] of [['night_sleep','night'],['nap','nap']]){const item=periods.find(x=>x.name===name)||{};$('#'+prefix+'Enabled').checked=!!item.enabled;$('#'+prefix+'Start').value=item.start||'';$('#'+prefix+'End').value=item.end||''}}
+  function bubble(text,mine=false){const el=document.createElement('div');el.className='bubble'+(mine?' me':'');el.textContent=text;$('#messages').appendChild(el);$('#messages').scrollTop=$('#messages').scrollHeight;return el}
+  function connect(){clearTimeout(reconnectTimer);ws=new WebSocket(wsUrl);ws.onopen=()=>{setOnline(true,false);send({type:'read_sensors'});send({type:'settings_get'})};ws.onclose=()=>{setOnline(false,false);reconnectTimer=setTimeout(connect,2500)};ws.onerror=()=>setOnline(false,false);ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='app_hello'){setOnline(true,!!m.esp32_connected);if(m.latest)updateSensors(m.latest);if(m.settings)applySettings(m.settings)}else if(m.type==='sensor_data'){setOnline(true,true);updateSensors(m)}else if(m.type==='settings_state'){applySettings(m.settings);toast(m.ok?'设置已保存':'设置已同步')}else if(m.type==='command_ack'){toast(m.ok?'指令已送达':'设备未执行指令')}else if(m.type==='pump_result'){updateSensors(m.data||m)}else if(m.type==='led_state'){ledOn=!!m.data?.enabled;updateSwitches()}else if(m.type==='ir_state'){fanOn=!!m.data?.fan_on;humidifierOn=!!m.data?.humidifier_on;updateSwitches()}else if(m.type.startsWith('app_chat_')){const el=replies.get(m.request_id);if(!el)return;if(m.type==='app_chat_delta')el.textContent=m.text||el.textContent+(m.delta||'');if(m.type==='app_chat_done'){el.textContent=m.text||el.textContent;replies.delete(m.request_id)}if(m.type==='app_chat_error'){el.textContent='发送失败：'+(m.error||'云端未响应');replies.delete(m.request_id)}}}}
+  $('#pressureTarget').addEventListener('input',e=>$('#targetText').textContent=Number(e.target.value).toFixed(1));$$('[data-pillow]').forEach(b=>b.addEventListener('click',()=>{let action=b.dataset.pillow;const payload={type:'pillow_cmd',action,duration_sec:2};if(action==='target'){const target=Number($('#pressureTarget').value);action=lastPressure!==null&&target<lastPressure?'recover':'tilt';payload.action=action;payload.target_kpa=target}send(payload)&&toast('枕头指令已发送')}));
+  $('#ledBrightness').addEventListener('input',e=>$('#ledOutput').value=e.target.value+'%');$('#ledBrightness').addEventListener('change',e=>{ledOn=true;send({type:'led_cmd',action:'set',enabled:true,brightness_pct:Number(e.target.value)});updateSwitches()});$$('[data-led]').forEach(b=>b.addEventListener('click',()=>{ledOn=b.dataset.led==='on';send({type:'led_cmd',action:b.dataset.led,enabled:ledOn,brightness_pct:ledOn?Number($('#ledBrightness').value):0});updateSwitches()}));
+  $$('[data-ir]').forEach(b=>b.addEventListener('click',()=>{const [device,action]=b.dataset.ir.split(':');if(device==='fan')fanOn=action==='on';else humidifierOn=action==='on';send({type:'ir_cmd',device,action});updateSwitches()}));
+  function sendChat(){const input=$('#chatText'),text=input.value.trim();if(!text)return;const id='web-'+Date.now();bubble(text,true);const reply=bubble('正在思考...');replies.set(id,reply);if(!send({type:'app_chat',text,request_id:id,session_id:'web-control'})){reply.textContent='云端未连接';replies.delete(id)}input.value=''}$('#sendBtn').addEventListener('click',sendChat);$('#chatText').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat()});
+  $('#refreshBtn').addEventListener('click',()=>send({type:'read_sensors'}));$('#settingsBtn').addEventListener('click',()=>$('#settingsDialog').showModal());$('#closeSettings').addEventListener('click',()=>$('#settingsDialog').close());$('#saveSettings').addEventListener('click',()=>{const periods=[{name:'night_sleep',label:'夜间睡眠',enabled:$('#nightEnabled').checked,start:$('#nightStart').value,end:$('#nightEnd').value},{name:'nap',label:'午休',enabled:$('#napEnabled').checked,start:$('#napStart').value,end:$('#napEnd').value}];const next={...settings,personality:{...(settings.personality||{}),tone:$('#tone').value,description:$('#description').value},quiet_periods:periods};if(send({type:'settings_update',settings:next}))$('#settingsDialog').close()});
+  window.lucide?.createIcons({attrs:{'stroke-width':2}});updateSwitches();connect();
+</script>
+</body>
+</html>
