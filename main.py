@@ -503,20 +503,29 @@ async def send_tts_stream_to_esp32(
         client_id, "start", source=source, turn_id=turn_id
     ):
         return False
+    seq = 0
     try:
         seq = await send_tts_audio_frames_to_esp32(
             client_id, text, source=source, turn_id=turn_id
         )
+    except asyncio.CancelledError:
+        print(f"[TTS-send] cancelled, turn_id={turn_id}")
+        raise
     except Exception as exc:
         print(f"[TTS-send] failed: {exc}")
-        await send_tts_state_to_esp32(
-            client_id, "stop", source=source, turn_id=turn_id, end_dialog=end_dialog
-        )
         return False
+    finally:
+        try:
+            await asyncio.shield(send_tts_state_to_esp32(
+                client_id,
+                "stop",
+                source=source,
+                turn_id=turn_id,
+                end_dialog=end_dialog,
+            ))
+        except Exception as exc:
+            print(f"[TTS-send] stop failed: {exc}")
 
-    await send_tts_state_to_esp32(
-        client_id, "stop", source=source, turn_id=turn_id, end_dialog=end_dialog
-    )
     if seq <= 0:
         return False
 
