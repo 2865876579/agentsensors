@@ -20,6 +20,7 @@ import json
 import math
 import asyncio
 import base64
+import random
 import re
 import uuid
 import opuslib
@@ -96,7 +97,24 @@ app.add_middleware(
 APP_VERSION = "xiaozhi_realtime_v5"
 
 WAKE_TRIGGER_TEXT = "__wake__"
-WAKE_REPLY_TEXT = "我在，你说。"
+WAKE_REPLY_GENERAL = (
+    "在呢，怎么啦？",
+    "我听着呢。",
+    "在，什么事？",
+    "来了，你说。",
+    "嗯，我在听。",
+    "怎么啦，我听着。",
+)
+WAKE_REPLY_MORNING = (
+    "早，我在呢。",
+    "早呀，怎么啦？",
+    "醒啦，我听着呢。",
+)
+WAKE_REPLY_NIGHT = (
+    "夜里我也在，你慢慢说。",
+    "这么晚还没睡呀，我听着呢。",
+    "嗯，我在，慢慢说。",
+)
 SLEEP_GREETING_TRIGGER_TEXT = "用户刚刚躺下了，请温柔地主动问候一句"
 EXIT_REPLY_TEXT = "好的，再见小安。"
 EXIT_PHRASES = (
@@ -120,6 +138,8 @@ pc_agents: dict[str, WebSocket] = {}
 esp32_clients: dict[str, WebSocket] = {}
 esp32_send_locks: dict[str, asyncio.Lock] = {}
 esp32_sessions: dict[str, dict] = {}
+wake_requests: dict[str, dict] = {}
+last_wake_replies: dict[str, str] = {}
 pc_command_contexts: dict[str, dict] = {}
 _pc_command_futures: dict[str, asyncio.Future] = {}  # LLM → PC Agent 往返
 _sensor_futures: dict[str, asyncio.Future] = {}     # LLM → ESP32 传感器读取
@@ -349,6 +369,33 @@ def is_exit_phrase(text: str) -> bool:
     return any(phrase in normalized for phrase in EXIT_PHRASES)
 
 
+def normalize_device_id(value) -> str:
+    device_id = str(value or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_-]{4,64}", device_id):
+        return ""
+    return device_id
+
+
+def select_wake_reply(device_key: str) -> str:
+    try:
+        tz = ZoneInfo(TIMEZONE) if ZoneInfo else None
+    except Exception:
+        tz = None
+    hour = datetime.now(tz).hour if tz else datetime.now().hour
+    if 5 <= hour < 10:
+        pool = WAKE_REPLY_MORNING
+    elif hour >= 22 or hour < 5:
+        pool = WAKE_REPLY_NIGHT
+    else:
+        pool = WAKE_REPLY_GENERAL
+
+    previous = last_wake_replies.get(device_key)
+    choices = [reply for reply in pool if reply != previous] or list(pool)
+    reply = random.choice(choices)
+    last_wake_replies[device_key] = reply
+    return reply
+
+
 def is_sleep_greeting_trigger(text: str) -> bool:
     raw = str(text or "").strip()
     if raw == SLEEP_GREETING_TRIGGER_TEXT:
@@ -359,9 +406,16 @@ def is_sleep_greeting_trigger(text: str) -> bool:
     return any(line == SLEEP_GREETING_TRIGGER_TEXT for line in lines)
 
 
-async def drop_esp32_client(client_id: str, reason: str = "") -> None:
+async def drop_esp32_client(
+    client_id: str,
+    reason: str = "",
+    expected_websocket: WebSocket | None = None,
+) -> None:
     """Remove a stale ESP32 websocket so future commands target a healthy client."""
     global last_active_esp32_id
+    websocket = esp32_clients.get(client_id)
+    if expected_websocket is not None and websocket is not expected_websocket:
+        return
     websocket = esp32_clients.pop(client_id, None)
     esp32_send_locks.pop(client_id, None)
     session = esp32_sessions.pop(client_id, None) or {}
@@ -402,7 +456,9 @@ async def send_json_to_esp32(client_id: str, payload: dict) -> bool:
             await websocket.send_text(json.dumps(payload, ensure_ascii=False))
         return True
     except Exception as exc:
-        await drop_esp32_client(client_id, f"json send failed: {exc}")
+        await drop_esp32_client(
+            client_id, f"json send failed: {exc}", expected_websocket=websocket
+        )
         return False
 
 
@@ -416,7 +472,9 @@ async def send_bytes_to_esp32(client_id: str, frame: bytes) -> bool:
             await websocket.send_bytes(frame)
         return True
     except Exception as exc:
-        await drop_esp32_client(client_id, f"bytes send failed: {exc}")
+        await drop_esp32_client(
+            client_id, f"bytes send failed: {exc}", expected_websocket=websocket
+        )
         return False
 
 
@@ -2561,7 +2619,9 @@ async def cancel_active_task(client_id: str) -> None:
 async def process_text_turn(client_id: str, text: str, history: list[dict], turn_id: int) -> None:
     try:
         if text == WAKE_TRIGGER_TEXT:
-            await send_tts_stream_to_esp32(client_id, WAKE_REPLY_TEXT, turn_id=turn_id)
+            await send_tts_stream_to_esp32(
+                client_id, select_wake_reply(client_id), turn_id=turn_id
+            )
             return
 
         await answer_user_text(client_id, text, history, turn_id)
@@ -2740,12 +2800,21 @@ async def esp32_endpoint(websocket: WebSocket):
                 msg_type = data.get("type")
 
                 if msg_type == "hello":
-                    session_id = data.get("session_id") or uuid.uuid4().hex[:12]
+                    device_id = normalize_device_id(data.get("device_id"))
+                    session_id = data.get("session_id") or device_id or uuid.uuid4().hex[:12]
                     esp32_sessions[client_id]["session_id"] = session_id
+                    esp32_sessions[client_id]["device_id"] = device_id
                     esp32_sessions[client_id]["audio_params"] = data.get("audio_params", {})
                     for old_id, old_session in list(esp32_sessions.items()):
-                        if old_id != client_id and old_session.get("session_id") == session_id:
-                            await drop_esp32_client(old_id, f"superseded by session {session_id}")
+                        same_device = device_id and old_session.get("device_id") == device_id
+                        same_session = old_session.get("session_id") == session_id
+                        if old_id != client_id and (same_device or same_session):
+                            old_websocket = esp32_clients.get(old_id)
+                            await drop_esp32_client(
+                                old_id,
+                                f"superseded by device {device_id or session_id}",
+                                expected_websocket=old_websocket,
+                            )
                     await send_json_to_esp32(client_id, {
                         "type": "hello",
                         "session_id": session_id,
@@ -2798,17 +2867,64 @@ async def esp32_endpoint(websocket: WebSocket):
                             f"chunks={incoming['chunks']}, opus_bytes={incoming['opus_bytes']}"
                         )
                     elif state == "detect":
-                        print(f"[ESP32] wake detected: {data.get('text', '')}")
+                        try:
+                            wake_id = int(data.get("wake_id") or 0)
+                        except (TypeError, ValueError):
+                            wake_id = 0
+                        device_key = (
+                            esp32_sessions[client_id].get("device_id") or client_id
+                        )
+                        previous = wake_requests.get(device_key) or {}
+                        duplicate = wake_id > 0 and previous.get("wake_id") == wake_id
+                        reply_text = (
+                            previous.get("reply_text")
+                            if duplicate
+                            else select_wake_reply(device_key)
+                        )
+                        if not reply_text:
+                            reply_text = select_wake_reply(device_key)
+
+                        if wake_id > 0:
+                            acknowledged = await send_json_to_esp32(client_id, {
+                                "type": "wake_ack",
+                                "wake_id": wake_id,
+                                "duplicate": duplicate,
+                            })
+                            if not acknowledged:
+                                continue
+
+                        previous_task = previous.get("task")
+                        if (
+                            duplicate
+                            and previous.get("client_id") == client_id
+                            and previous_task
+                            and not previous_task.done()
+                        ):
+                            print(f"[ESP32] duplicate wake still active: wake_id={wake_id}")
+                            continue
+
+                        print(
+                            f"[ESP32] wake detected: {data.get('text', '')} "
+                            f"wake_id={wake_id} duplicate={duplicate}"
+                        )
                         turn_id = next_turn_id(client_id)
                         await cancel_active_task(client_id)
                         task = asyncio.create_task(
                             send_tts_stream_to_esp32(
                                 client_id,
-                                WAKE_REPLY_TEXT,
+                                reply_text,
                                 turn_id=turn_id,
                             )
                         )
                         esp32_sessions[client_id]["active_task"] = task
+                        if wake_id > 0:
+                            wake_requests[device_key] = {
+                                "wake_id": wake_id,
+                                "reply_text": reply_text,
+                                "client_id": client_id,
+                                "task": task,
+                                "received_at": time.time(),
+                            }
                     continue
 
                 if msg_type == "abort":
