@@ -187,7 +187,7 @@ async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int
         return "电脑助手未连接，请先在电脑上运行 pc_agent.py"
 
     command_id = f"{client_id}:{turn_id}:{int(time.time() * 1000)}"
-    future: asyncio.Future = asyncio.get_event_loop().create_future()
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
     _pc_command_futures[command_id] = future
 
     sent = await send_pc_command(
@@ -753,15 +753,20 @@ async def send_pc_command(pc_command: dict, client_id: str, turn_id: int,
         "created_at": time.monotonic(),
     }
 
-    agent_ws = next(iter(pc_agents.values()))
-    await agent_ws.send_text(json.dumps({
-        "type": "pc_command",
-        "client_id": client_id,
-        "turn_id": turn_id,
-        "command_id": command_id,
-        "command": pc_command
-    }, ensure_ascii=False))
-    return True
+    agent_id, agent_ws = next(iter(pc_agents.items()))
+    try:
+        await agent_ws.send_text(json.dumps({
+            "type": "pc_command",
+            "client_id": client_id,
+            "turn_id": turn_id,
+            "command_id": command_id,
+            "command": pc_command
+        }, ensure_ascii=False))
+        return True
+    except Exception as exc:
+        print(f"[PC Agent] send_pc_command failed ({agent_id}): {exc}")
+        pc_agents.pop(agent_id, None)
+        return False
 
 
 def next_turn_id(client_id: str) -> int:
@@ -2037,6 +2042,11 @@ def _should_flush_tts(text: str, is_first: bool = False) -> int:
 
 
 async def handle_ai_stream_result(client_id: str, user_text: str, history: list[dict], turn_id: int) -> None:
+    # 限制历史长度：保留最近 40 条（20 轮对话），防止内存无限增长
+    MAX_HISTORY = 40
+    if len(history) > MAX_HISTORY:
+        del history[:(len(history) - MAX_HISTORY)]
+
     text_buffer = ""          # 全部原始输出，不清空
     processed = 0             # 已发送到的位置（指针）
     full_reply = ""
@@ -2444,7 +2454,9 @@ async def handle_app_chat_once(
                     wait_before_audio=preroll_task,
                 )
 
-            esp32_sessions[target]["active_task"] = asyncio.create_task(_music_task())
+            # 防止 ESP32 在任务创建前断开导致 KeyError
+            if target in esp32_sessions:
+                esp32_sessions[target]["active_task"] = asyncio.create_task(_music_task())
 
         await send_app_message(websocket, {
             "type": "app_chat_delta",

@@ -84,6 +84,11 @@ EMAIL_PASS = os.getenv("EMAIL_PASS", "")
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")  # 监听地址，0.0.0.0 表示所有网卡
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))  # 监听端口1
 
+# ==================== 和风天气配置 ====================
+# 注册地址：https://dev.qweather.com （免费档每天 1000 次）
+# 注册后创建应用，把 API Key 填到 .env 的 QWEATHER_API_KEY
+QWEATHER_API_KEY = os.getenv("QWEATHER_API_KEY", "")
+
 # ==================== 网易云音乐配置 ====================
 # 登录 Cookie 放在 .env，不要写进代码仓库。
 NETEASE_COOKIE = os.getenv("NETEASE_COOKIE", "")
