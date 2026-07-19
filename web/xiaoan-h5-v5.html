@@ -3469,6 +3469,7 @@ function collectSettings(){
       id:currentAlarm.id || 'wake_alarm',
       enabled:!!document.getElementById('alarmEnabled')?.checked,
       time:document.getElementById('alarmTime')?.value || '07:30',
+      trigger_at:(document.getElementById('alarmTime')?.value || '07:30')===(currentAlarm.time || '07:30') ? (currentAlarm.trigger_at || '') : '',
       repeat:document.getElementById('alarmRepeat')?.value || 'daily',
       song_query:(document.getElementById('alarmSong')?.value || '小半').trim() || '小半',
       music_stage_seconds:30,

@@ -11,6 +11,7 @@ DeepSeek 对话模块 —— 基于 Function Calling
 """
 import json
 import re
+import time
 from datetime import datetime, date, timedelta
 
 # zoneinfo 是 Python 3.9+ 标准库，用于时区感知的时间计算
@@ -357,6 +358,36 @@ async def classify_pre_sleep_light_reply(user_text: str) -> str:
 
 async def classify_music_request(user_text: str) -> dict:
     """Use the LLM to decide whether the user is asking for music/audio playback."""
+    fallback = {"action": "none", "query": "", "reason": "not_music"}
+    raw = str(user_text or "").strip()
+    try:
+        from netease_music import extract_music_query, parse_music_query
+
+        fast_query = extract_music_query(raw)
+    except Exception as exc:
+        print(f"[Music] fast intent error: {exc}")
+        fast_query = None
+
+    if fast_query == "__stop_music__":
+        return {
+            "action": "stop", "query": "", "title": "", "artist": "",
+            "kind": "unknown", "reason": "fast_stop",
+        }
+    if fast_query:
+        query, title, artist, kind = parse_music_query(fast_query)
+        return {
+            "action": "play", "query": query, "title": title, "artist": artist,
+            "kind": kind, "reason": "fast_play",
+        }
+
+    compact = re.sub(r"\s+", "", raw)
+    music_hints = (
+        "歌", "歌曲", "音乐", "曲子", "白噪声", "白噪音", "雨声", "助眠音",
+        "播放", "暂停播放", "停止播放", "下一首", "换一首",
+    )
+    if not any(hint in compact for hint in music_hints):
+        return fallback
+
     system = (
         "你是一个严格的语义分类器，用来判断用户是否要播放或停止网络音乐/白噪声。"
         "只能输出 JSON，不要解释，不要 Markdown。"
@@ -375,7 +406,6 @@ async def classify_music_request(user_text: str) -> dict:
         "\n- 如果用户说'随便来首周杰伦'，query 输出'周杰伦'，title=''，artist='周杰伦'，kind='artist'。"
         "\n- 如果用户说'雨声助眠'，query 输出'雨声 白噪音 助眠'，title='雨声助眠'，artist=''。"
     )
-    fallback = {"action": "none", "query": "", "reason": "not_music"}
     try:
         response = await client.chat.completions.create(
             model=DEEPSEEK_MODEL,
@@ -419,6 +449,54 @@ async def classify_music_request(user_text: str) -> dict:
     except Exception as exc:
         print(f"[LLM] classify_music_request error: {exc}")
         return fallback
+
+
+async def classify_music_stop_request(user_text: str) -> bool:
+    """Use semantic intent, not a fixed phrase list, for music barge-in."""
+    system = (
+        "你是音乐播放控制意图分类器。判断用户此刻是否明确要求停止、暂停、"
+        "关闭或不要继续当前正在播放的音乐。只能输出 JSON，不要解释。"
+        '\n输出格式：{"stop":true|false,"reason":"很短原因"}'
+        "\n表达方式可以很口语、含否定或省略，不要求出现固定关键词。"
+        "\n如果用户只是在聊天、评价歌曲、要求换歌、调音量、询问歌名，stop=false。"
+        "\n只有用户希望当前音乐停止或暂停时，stop=true。"
+    )
+    try:
+        started = time.monotonic()
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": str(user_text or "").strip()},
+            ],
+            max_tokens=96,
+            temperature=0,
+        )
+        message = response.choices[0].message
+        content = (message.content or "").strip()
+        if not content:
+            content = str(getattr(message, "reasoning_content", "") or "").strip()
+        if content.startswith("```"):
+            content = content.strip("`")
+            if content.lower().startswith("json"):
+                content = content[4:].strip()
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start < 0 or end <= start:
+                raise
+            result = json.loads(content[start:end + 1])
+        stop = bool(result.get("stop"))
+        print(
+            f"[LLM] music_barge stop={stop} "
+            f"latency={time.monotonic() - started:.3f}s text={user_text!r}"
+        )
+        return stop
+    except Exception as exc:
+        print(f"[LLM] classify_music_stop_request error: {exc}")
+        return False
 
 
 _CN_DIGITS = {
@@ -483,9 +561,10 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
     if not compact:
         return None
 
-    if re.search(r"(取消|关闭|关掉|删掉|不要|停掉).{0,8}闹钟", compact):
+    if re.search(r"(取消|关闭|关掉|删掉|不要|停掉).{0,8}(闹钟|提醒|定时)", compact):
         return {
             "action": "cancel",
+            "relative_seconds": 0,
             "relative_minutes": 0,
             "time": "",
             "song_query": "",
@@ -493,7 +572,7 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
             "reason": "fast_cancel_alarm",
         }
 
-    if not re.search(r"(闹钟|叫醒|唤醒|喊醒|叫我起床|叫我)", compact):
+    if not re.search(r"(闹钟|叫醒|唤醒|喊醒|叫我起床|叫我|提醒|定时)", compact):
         return None
 
     repeat = "once"
@@ -506,20 +585,37 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
 
     song_query = _extract_alarm_song(raw)
 
+    relative_seconds = 0
+    seconds_match = re.search(
+        r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(?:秒|秒钟)(?:后|之后|以后)",
+        compact,
+    )
+    if seconds_match:
+        number = _parse_cn_number(seconds_match.group(1))
+        if number is not None:
+            relative_seconds = number
+
     relative_minutes = 0
-    if "半小时" in compact:
+    if relative_seconds <= 0 and "半小时" in compact:
         relative_minutes = 30
-    else:
+    elif relative_seconds <= 0:
         match = re.search(r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(分钟|分|小时|钟头)(?:后|之后|以后)", compact)
         if match:
             number = _parse_cn_number(match.group(1))
             if number is not None:
                 relative_minutes = number * (60 if match.group(2) in {"小时", "钟头"} else 1)
 
-    if relative_minutes > 0:
+    if relative_seconds > 0 or relative_minutes > 0:
         return {
             "action": "set",
-            "relative_minutes": max(1, min(24 * 60, relative_minutes)),
+            "relative_seconds": (
+                max(1, min(24 * 60 * 60, relative_seconds))
+                if relative_seconds > 0 else 0
+            ),
+            "relative_minutes": (
+                max(1, min(24 * 60, relative_minutes))
+                if relative_minutes > 0 else 0
+            ),
             "time": "",
             "song_query": song_query,
             "repeat": repeat,
@@ -544,6 +640,7 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
             hour %= 24
             return {
                 "action": "set",
+                "relative_seconds": 0,
                 "relative_minutes": 0,
                 "time": f"{hour:02d}:{minute:02d}",
                 "song_query": song_query,
@@ -561,17 +658,33 @@ async def classify_alarm_request(user_text: str) -> dict:
         print(f"[LLM] alarm_intent fast {fast}")
         return fast
 
+    raw = re.sub(r"\s+", "", str(user_text or ""))
+    alarm_hints = (
+        "闹钟", "叫醒", "叫我", "唤醒我", "提醒我", "定时", "取消提醒",
+        "关闭提醒", "分钟后", "小时后",
+    )
+    if not any(hint in raw for hint in alarm_hints):
+        return {
+            "action": "none",
+            "relative_seconds": 0,
+            "relative_minutes": 0,
+            "time": "",
+            "song_query": "",
+            "repeat": "once",
+            "reason": "not_alarm",
+        }
+
     system = (
         "你是一个严格的语义分类器，用来判断用户是否要设置或取消智能枕头闹钟。"
         "只能输出 JSON，不要解释，不要 Markdown。"
         f"\n当前时间：{_get_time_string()}，时区：{TIMEZONE}"
         "\n\n输出格式："
-        '{"action":"set|cancel|none","relative_minutes":0,"time":"HH:MM或空","song_query":"唤醒歌曲或空","repeat":"once|daily|workday|weekend","reason":"很短原因"}'
+        '{"action":"set|cancel|none","relative_seconds":0,"relative_minutes":0,"time":"HH:MM或空","song_query":"唤醒歌曲或空","repeat":"once|daily|workday|weekend","reason":"很短原因"}'
         "\n\n判定规则："
         "\n- 用户说定闹钟、设置闹钟、几分钟/几小时后叫我、几点叫醒我、用某首歌唤醒 => action=set。"
         "\n- 用户说取消闹钟、关闭闹钟、别叫我了 => action=cancel。"
         "\n- 只是讨论闹钟功能、问怎么设置、问当前闹钟，不执行设置 => action=none。"
-        "\n- 相对时间如'十分钟后'、'半小时后'、'一个小时后'必须填 relative_minutes，time 留空。"
+        "\n- 相对秒数如'30秒后'必须填 relative_seconds；相对分钟/小时填 relative_minutes；time 留空。"
         "\n- 绝对时间如'早上七点半'填 time='07:30'；晚上七点填 '19:00'；没有明确日期时 repeat 默认 once。"
         "\n- 用户说'每天/工作日/周末'时 repeat 对应 daily/workday/weekend，否则 repeat=once。"
         "\n- song_query 只填用于网易云搜索的歌曲关键词，去掉'用/唤醒/叫醒/闹钟'等口语；例如'用海屿你唤醒' => '海屿你'。"
@@ -579,6 +692,7 @@ async def classify_alarm_request(user_text: str) -> dict:
     )
     fallback = {
         "action": "none",
+        "relative_seconds": 0,
         "relative_minutes": 0,
         "time": "",
         "song_query": "",
@@ -617,18 +731,28 @@ async def classify_alarm_request(user_text: str) -> dict:
         if repeat not in {"once", "daily", "workday", "weekend"}:
             repeat = "once"
         try:
+            relative_seconds = int(float(obj.get("relative_seconds") or 0))
+        except (TypeError, ValueError):
+            relative_seconds = 0
+        try:
             relative_minutes = int(float(obj.get("relative_minutes") or 0))
         except (TypeError, ValueError):
             relative_minutes = 0
         result = {
             "action": action,
+            "relative_seconds": max(0, min(24 * 60 * 60, relative_seconds)),
             "relative_minutes": max(0, min(24 * 60, relative_minutes)),
             "time": str(obj.get("time") or "").strip()[:5],
             "song_query": str(obj.get("song_query") or "").strip()[:80],
             "repeat": repeat,
             "reason": str(obj.get("reason") or "").strip()[:80],
         }
-        if action == "set" and not result["relative_minutes"] and not result["time"]:
+        if (
+            action == "set"
+            and not result["relative_seconds"]
+            and not result["relative_minutes"]
+            and not result["time"]
+        ):
             result["action"] = "none"
         print(f"[LLM] alarm_intent {result}")
         return result

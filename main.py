@@ -50,6 +50,7 @@ from llm_deepseek import (
     classify_alarm_request,
     classify_didi_ride_request,
     classify_music_request,
+    classify_music_stop_request,
     classify_pre_sleep_light_reply,
     generate_automation_reply,
     set_pc_command_callback,
@@ -137,6 +138,10 @@ pc_agents: dict[str, WebSocket] = {}
 # 存储已连接的 ESP32 客户端，PC Agent 回传结果时用于播报到设备。
 esp32_clients: dict[str, WebSocket] = {}
 esp32_send_locks: dict[str, asyncio.Lock] = {}
+esp32_tts_locks: dict[str, asyncio.Lock] = {}
+esp32_tts_owners: dict[str, asyncio.Task] = {}
+esp32_tts_frame_counts: dict[str, int] = {}
+esp32_tts_playback_events: dict[str, asyncio.Event] = {}
 esp32_sessions: dict[str, dict] = {}
 wake_requests: dict[str, dict] = {}
 last_wake_replies: dict[str, str] = {}
@@ -150,6 +155,8 @@ app_clients: dict[str, WebSocket] = {}
 app_chat_histories: dict[str, list[dict]] = {}
 latest_sensor_data: dict | None = None
 latest_snore_event: dict | None = None
+sensor_cache_by_client: dict[str, dict] = {}
+snore_cache_by_client: dict[str, dict] = {}
 sensor_poll_task: asyncio.Task | None = None
 alarm_scheduler_task: asyncio.Task | None = None
 alarm_runtime: dict = {
@@ -207,6 +214,7 @@ async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int
         return "电脑操作超时，请确认 PC Agent 还在运行"
     finally:
         _pc_command_futures.pop(command_id, None)
+        pc_command_contexts.pop(command_id, None)
 
 
 async def _pillow_cb(action: str, duration_sec: int, client_id: str, turn_id: int,
@@ -412,7 +420,7 @@ async def drop_esp32_client(
     expected_websocket: WebSocket | None = None,
 ) -> None:
     """Remove a stale ESP32 websocket so future commands target a healthy client."""
-    global last_active_esp32_id
+    global last_active_esp32_id, latest_sensor_data, latest_snore_event
     websocket = esp32_clients.get(client_id)
     if expected_websocket is not None and websocket is not expected_websocket:
         return
@@ -420,17 +428,26 @@ async def drop_esp32_client(
     esp32_send_locks.pop(client_id, None)
     session = esp32_sessions.pop(client_id, None) or {}
     device_tts_busy_until.pop(client_id, None)
+    esp32_tts_frame_counts.pop(client_id, None)
+    esp32_tts_playback_events.pop(client_id, None)
+    sensor_cache_by_client.pop(client_id, None)
+    snore_cache_by_client.pop(client_id, None)
+    tts_lock = esp32_tts_locks.pop(client_id, None)
+    esp32_tts_owners.pop(client_id, None)
+    if tts_lock is not None and tts_lock.locked():
+        tts_lock.release()
 
     task = session.get("active_task")
     current = asyncio.current_task()
     if task and task is not current and not task.done():
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            print(f"[ESP32] stale task cleanup error: {exc}")
+        # Do not await here. A child task can discover the broken socket while
+        # its parent active task is cancelling that same child, which otherwise
+        # creates a circular await and a RecursionError.
+
+    barge_task = session.get("barge_task")
+    if barge_task and barge_task is not current and not barge_task.done():
+        barge_task.cancel()
 
     if websocket is not None:
         try:
@@ -440,6 +457,18 @@ async def drop_esp32_client(
 
     if last_active_esp32_id == client_id:
         last_active_esp32_id = pick_esp32_client()
+    if latest_sensor_data and latest_sensor_data.get("client_id") == client_id:
+        latest_sensor_data = max(
+            sensor_cache_by_client.values(),
+            key=lambda item: float(item.get("received_at") or 0),
+            default=None,
+        )
+    if latest_snore_event and latest_snore_event.get("client_id") == client_id:
+        latest_snore_event = max(
+            snore_cache_by_client.values(),
+            key=lambda item: float(item.get("received_at") or 0),
+            default=None,
+        )
     if reason:
         print(f"[ESP32] removed stale client {client_id}: {reason}")
 
@@ -478,6 +507,29 @@ async def send_bytes_to_esp32(client_id: str, frame: bytes) -> bool:
         return False
 
 
+async def _acquire_tts_stream(client_id: str) -> bool:
+    lock = esp32_tts_locks.get(client_id)
+    if lock is None:
+        return False
+    await lock.acquire()
+    if esp32_tts_locks.get(client_id) is not lock or client_id not in esp32_clients:
+        if lock.locked():
+            lock.release()
+        return False
+    esp32_tts_owners[client_id] = asyncio.current_task()
+    return True
+
+
+def _release_tts_stream(client_id: str, owner: asyncio.Task | None = None) -> None:
+    expected_owner = owner or asyncio.current_task()
+    if esp32_tts_owners.get(client_id) is not expected_owner:
+        return
+    esp32_tts_owners.pop(client_id, None)
+    lock = esp32_tts_locks.get(client_id)
+    if lock is not None and lock.locked():
+        lock.release()
+
+
 def session_id_of(client_id: str) -> str:
     session = esp32_sessions.get(client_id) or {}
     return session.get("session_id", "")
@@ -491,7 +543,21 @@ async def send_tts_state_to_esp32(
     turn_id: int | None = None,
     end_dialog: bool = False,
     text: str | None = None,
+    stream_owner: asyncio.Task | None = None,
 ) -> bool:
+    owns_stream = False
+    if state == "stop" and stream_owner is None:
+        owner = esp32_tts_owners.get(client_id) or asyncio.current_task()
+    else:
+        owner = stream_owner or asyncio.current_task()
+    playback_event = esp32_tts_playback_events.get(client_id)
+    if state == "start":
+        if not await _acquire_tts_stream(client_id):
+            return False
+        owns_stream = True
+        esp32_tts_frame_counts[client_id] = 0
+        if playback_event is not None:
+            playback_event.clear()
     payload = {"type": "tts", "state": state}
     sid = session_id_of(client_id)
     if sid:
@@ -504,14 +570,48 @@ async def send_tts_state_to_esp32(
         payload["turn_id"] = turn_id
     if text is not None:
         payload["text"] = text
-    ok = await send_json_to_esp32(client_id, payload)
-    if ok:
-        now = time.time()
-        if state == "start":
-            device_tts_busy_until[client_id] = now + 60.0
-        elif state == "stop":
-            device_tts_busy_until[client_id] = now + TTS_PLAYBACK_COOLDOWN_SEC
-    return ok
+    start_committed = False
+    try:
+        ok = await send_json_to_esp32(client_id, payload)
+        start_committed = state == "start" and ok
+        if owns_stream and not ok:
+            _release_tts_stream(client_id, owner)
+        if ok:
+            now = time.time()
+            if state == "start":
+                device_tts_busy_until[client_id] = now + 60.0
+            elif state == "stop":
+                frame_count = esp32_tts_frame_counts.pop(client_id, 0)
+                playback_wait = max(
+                    TTS_PLAYBACK_COOLDOWN_SEC,
+                    frame_count * 0.06 + 0.25,
+                )
+                stream_active = esp32_tts_owners.get(client_id) is owner
+                if stream_active and playback_event is not None:
+                    wait_seconds = min(playback_wait, 60.0)
+                    try:
+                        await asyncio.wait_for(
+                            playback_event.wait(), timeout=wait_seconds
+                        )
+                        device_tts_busy_until[client_id] = time.time() + 0.10
+                        print(
+                            f"[TTS] playback_done client={client_id} "
+                            f"wait={time.time() - now:.3f}s frames={frame_count}"
+                        )
+                    except asyncio.TimeoutError:
+                        device_tts_busy_until[client_id] = now + playback_wait
+                        print(
+                            f"[TTS] playback_done timeout client={client_id} "
+                            f"fallback={wait_seconds:.2f}s frames={frame_count}"
+                        )
+                else:
+                    device_tts_busy_until[client_id] = now + playback_wait
+        return ok
+    finally:
+        if owns_stream and not start_committed:
+            _release_tts_stream(client_id, owner)
+        if state == "stop":
+            _release_tts_stream(client_id, owner)
 
 
 async def send_tts_audio_frames_to_esp32(
@@ -528,12 +628,21 @@ async def send_tts_audio_frames_to_esp32(
         return 0
 
     frame_count = 0
+    started_at = time.monotonic()
     async for frame in synthesize(text, encoder=encoder):
         if not frame:
             continue
         if not await send_bytes_to_esp32(client_id, frame):
             return frame_count
         frame_count += 1
+        esp32_tts_frame_counts[client_id] = (
+            esp32_tts_frame_counts.get(client_id, 0) + 1
+        )
+        if frame_count == 1:
+            print(
+                f"[TTS] first_opus client={client_id} "
+                f"latency={time.monotonic() - started_at:.3f}s"
+            )
     return frame_count
 
 
@@ -544,7 +653,6 @@ async def send_tts_stream_to_esp32(
     source: str = "assistant",
     turn_id: int | None = None,
     end_dialog: bool = False,
-    wait_playback: bool = False,
 ) -> bool:
     """
     小安协议 TTS：
@@ -561,6 +669,7 @@ async def send_tts_stream_to_esp32(
         client_id, "start", source=source, turn_id=turn_id
     ):
         return False
+    stream_owner = asyncio.current_task()
     seq = 0
     try:
         seq = await send_tts_audio_frames_to_esp32(
@@ -580,6 +689,7 @@ async def send_tts_stream_to_esp32(
                 source=source,
                 turn_id=turn_id,
                 end_dialog=end_dialog,
+                stream_owner=stream_owner,
             ))
         except Exception as exc:
             print(f"[TTS-send] stop failed: {exc}")
@@ -588,8 +698,6 @@ async def send_tts_stream_to_esp32(
         return False
 
     print(f"[TTS-send] 全部完成, {seq} 帧")
-    if wait_playback:
-        await asyncio.sleep(min(4.0, seq * 0.06 + 0.25))
     return True
 
 
@@ -662,7 +770,8 @@ async def send_music_frames_to_esp32(
         return False
 
     print(f"[Music] play {song.label} id={song.id} br={song.br}")
-    await send_screen_status(client_id, f"状态：正在播放《{song.name}》。", event="music_play")
+    play_label = f"《{song.name}》 - {song.artists}" if song.artists else f"《{song.name}》"
+    await send_screen_status(client_id, f"状态：正在播放{play_label}。", event="music_play")
     await wait_preroll()
     if not await send_tts_state_to_esp32(client_id, "start", source=source, turn_id=turn_id):
         return False
@@ -694,6 +803,7 @@ async def send_music_frames_to_esp32(
             if not await send_bytes_to_esp32(client_id, frame):
                 return frame_count > 0
             frame_count += 1
+            esp32_tts_frame_counts[client_id] = frame_count
             await asyncio.sleep(0.055)
     except asyncio.CancelledError:
         print(f"[Music] cancelled: {song.label}")
@@ -991,8 +1101,7 @@ def _get_automation_state(client_id: str) -> dict:
         {
             "pending_light_prompt": None,
             "last_pre_sleep_prompt_key": "",
-            "last_sleep_greeting_day": "",
-            "sleep_greeting_in_progress_day": "",
+            "sleep_greeting_in_progress": False,
             "sleep_greeting_in_progress_until": 0.0,
             "last_on_pillow": None,
             "sleep_period_key": "",
@@ -1094,7 +1203,28 @@ def _alarm_repeat_matches(alarm: dict, now: datetime) -> bool:
 
 
 def _alarm_trigger_key(alarm: dict, now: datetime) -> str:
+    trigger_at = str(alarm.get("trigger_at") or "").strip()
+    if trigger_at:
+        return f"{alarm.get('id')}:{trigger_at}"
     return f"{now.date().isoformat()}:{alarm.get('id')}:{alarm.get('time')}"
+
+
+def _alarm_is_due(alarm: dict, now: datetime) -> bool:
+    trigger_at_text = str(alarm.get("trigger_at") or "").strip()
+    if trigger_at_text:
+        try:
+            trigger_at = datetime.fromisoformat(trigger_at_text)
+            if trigger_at.tzinfo is None and now.tzinfo is not None:
+                trigger_at = trigger_at.replace(tzinfo=now.tzinfo)
+            return now >= trigger_at
+        except (TypeError, ValueError):
+            return False
+    try:
+        return _alarm_minutes(str(alarm.get("time") or "00:00")) == (
+            now.hour * 60 + now.minute
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _alarm_sensor_payload(client_id: str | None = None) -> dict | None:
@@ -1481,7 +1611,6 @@ async def maybe_trigger_alarm() -> None:
     settings = load_user_settings()
     alarms = settings.get("alarms") or []
     now = _alarm_now()
-    now_min = now.hour * 60 + now.minute
     target = pick_esp32_client()
     if not target:
         return
@@ -1491,11 +1620,7 @@ async def maybe_trigger_alarm() -> None:
             continue
         if not _alarm_repeat_matches(alarm, now):
             continue
-        try:
-            alarm_min = _alarm_minutes(str(alarm.get("time") or "00:00"))
-        except Exception:
-            continue
-        if alarm_min != now_min:
+        if not _alarm_is_due(alarm, now):
             continue
         trigger_key = _alarm_trigger_key(alarm, now)
         if alarm.get("last_triggered_key") == trigger_key:
@@ -1508,6 +1633,7 @@ async def maybe_trigger_alarm() -> None:
                 updated["last_triggered_key"] = trigger_key
                 if updated.get("repeat") == "once":
                     updated["enabled"] = False
+                    updated["trigger_at"] = ""
             updated_alarms.append(updated)
         settings = save_user_settings({"alarms": updated_alarms})
         await broadcast_to_apps({
@@ -1541,6 +1667,11 @@ def ensure_alarm_scheduler_task() -> None:
 
 def _alarm_time_from_intent(intent: dict) -> tuple[datetime | None, str]:
     now = _alarm_now()
+    relative_seconds = int(intent.get("relative_seconds") or 0)
+    if relative_seconds > 0:
+        target = now + timedelta(seconds=relative_seconds)
+        return target, f"{relative_seconds}秒后"
+
     relative_minutes = int(intent.get("relative_minutes") or 0)
     if relative_minutes > 0:
         target = now + timedelta(minutes=relative_minutes)
@@ -1562,7 +1693,7 @@ def _alarm_time_from_intent(intent: dict) -> tuple[datetime | None, str]:
 
 def _format_alarm_reply(target: datetime, song_query: str, relative_text: str) -> str:
     song = song_query.strip() or "默认音乐"
-    if relative_text.endswith("分钟后"):
+    if relative_text.endswith(("秒后", "分钟后")):
         return f"好，{relative_text}用《{song}》叫你。"
     return f"好，已设好{target.strftime('%H:%M')}的闹钟，用《{song}》唤醒。"
 
@@ -1586,6 +1717,7 @@ async def handle_alarm_request_if_needed(
         "id": "wake_alarm",
         "enabled": False,
         "time": "07:30",
+        "trigger_at": "",
         "repeat": "daily",
         "song_query": "小半",
         "music_stage_seconds": 30,
@@ -1599,6 +1731,7 @@ async def handle_alarm_request_if_needed(
 
     if action == "cancel":
         current["enabled"] = False
+        current["trigger_at"] = ""
         current["last_triggered_key"] = ""
         updated = save_user_settings({"alarms": [current] + alarms[1:]})
         await broadcast_to_apps({
@@ -1621,10 +1754,15 @@ async def handle_alarm_request_if_needed(
         return reply
 
     song_query = str(intent.get("song_query") or "").strip() or str(current.get("song_query") or "小半")
+    relative_alarm = bool(
+        int(intent.get("relative_seconds") or 0)
+        or int(intent.get("relative_minutes") or 0)
+    )
     current.update({
         "enabled": True,
         "time": target.strftime("%H:%M"),
-        "repeat": str(intent.get("repeat") or "once"),
+        "trigger_at": target.isoformat(timespec="seconds") if relative_alarm else "",
+        "repeat": "once" if relative_alarm else str(intent.get("repeat") or "once"),
         "song_query": song_query,
         "music_stage_seconds": int(current.get("music_stage_seconds") or 30),
         "leave_confirm_seconds": int(current.get("leave_confirm_seconds") or 5),
@@ -1643,12 +1781,16 @@ async def handle_alarm_request_if_needed(
     })
 
     reply = _format_alarm_reply(target, song_query, relative_text)
+    display_time = relative_text or target.strftime("%H:%M")
     await send_screen_status(
         client_id,
-        f"状态：已设置{target.strftime('%H:%M')}闹钟，用《{song_query}》唤醒。",
+        f"状态：已设置{display_time}闹钟，用《{song_query}》唤醒。",
         event="alarm_setting",
     )
-    print(f"[AlarmSetting] set time={current['time']} repeat={current['repeat']} song={song_query!r}")
+    print(
+        f"[AlarmSetting] set time={current['time']} trigger_at={current['trigger_at']!r} "
+        f"repeat={current['repeat']} song={song_query!r}"
+    )
     if allow_voice:
         await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
     return reply
@@ -1936,35 +2078,22 @@ async def handle_sleep_greeting_trigger(
     state = _get_automation_state(client_id)
     quiet_status = get_quiet_status(settings)
     day_key = str(quiet_status.get("now") or "")[:10]
-    sleep_key = _current_sleep_quiet_key(quiet_status)
-    voice_blocked = is_ai_voice_blocked(settings)
-
-    if voice_blocked and sleep_key and state.get("sleep_greeting_late_allowed_key") != sleep_key:
-        await send_json_to_esp32(client_id, {"type": "status"})
-        print(f"[SleepGreeting] night sleep is silent; skip proactive voice key={sleep_key}")
-        return
-
-    if day_key and state.get("last_sleep_greeting_day") == day_key:
-        await send_json_to_esp32(client_id, {"type": "status"})
-        print(f"[就寝] 今日已主动问候过，跳过: {day_key}")
-        return
 
     now = time.time()
     if (
-        day_key
-        and state.get("sleep_greeting_in_progress_day") == day_key
+        state.get("sleep_greeting_in_progress")
         and float(state.get("sleep_greeting_in_progress_until") or 0) > now
     ):
         print(f"[就寝] 主动问候正在生成/播放，跳过重复触发: {day_key}")
         return
 
-    state["sleep_greeting_in_progress_day"] = day_key
+    state["sleep_greeting_in_progress"] = True
     state["sleep_greeting_in_progress_until"] = now + 45.0
     try:
-        await send_screen_status(client_id, "状态：今日首次躺下，正在进行关怀问候。", event="sleep_greeting")
+        await send_screen_status(client_id, "状态：检测到躺下，正在进行关怀问候。", event="sleep_greeting")
         print(f"[就寝] 开始生成主动问候: {day_key}")
         reply = await generate_automation_reply(
-            "压力传感器检测到用户刚刚躺下，这是今天第一次进入有人模式。"
+            "压力传感器检测到用户刚刚躺下。"
             "请用一句非常自然、低打扰的躺下关怀问候用户，像真实枕边助手。"
             "不要提传感器、系统、检测、模式，也不要催促用户回答。",
             fallback="躺好啦？我在这儿陪着你。",
@@ -1975,18 +2104,15 @@ async def handle_sleep_greeting_trigger(
         ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
         print(f"[就寝] 主动问候 TTS ok={ok}")
         if ok:
-            state["last_sleep_greeting_day"] = day_key
-            state["sleep_greeting_late_allowed_key"] = ""
             history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
             history.append({"role": "assistant", "content": reply})
             await request_one_shot_listen(client_id, "sleep_greeting_reply")
     except asyncio.CancelledError:
-        print(f"[就寝] 主动问候被取消，未计入今日已问候: {day_key}")
+        print(f"[就寝] 主动问候被取消: {day_key}")
         raise
     finally:
-        if state.get("sleep_greeting_in_progress_day") == day_key:
-            state["sleep_greeting_in_progress_day"] = ""
-            state["sleep_greeting_in_progress_until"] = 0.0
+        state["sleep_greeting_in_progress"] = False
+        state["sleep_greeting_in_progress_until"] = 0.0
 
 
 def extract_search_query_from_url(url: str) -> str | None:
@@ -2053,6 +2179,8 @@ async def handle_ai_stream_result(client_id: str, user_text: str, history: list[
     started_tts = False
     total_frames = 0
     is_first_sentence = True
+    llm_started_at = time.monotonic()
+    first_delta_at: float | None = None
 
     # ★ 一个 LLM 回复内共享编码器，避免冷启动首帧 -4/-2
     import opuslib as _opuslib
@@ -2061,6 +2189,12 @@ async def handle_ai_stream_result(client_id: str, user_text: str, history: list[
     try:
         async for delta in chat_stream(user_text, history,
                                         client_id=client_id, turn_id=turn_id):
+            if first_delta_at is None and delta:
+                first_delta_at = time.monotonic()
+                print(
+                    f"[LLM] first_delta client={client_id} turn={turn_id} "
+                    f"latency={first_delta_at - llm_started_at:.3f}s"
+                )
             full_reply += delta
             text_buffer += delta
 
@@ -2398,7 +2532,6 @@ async def handle_app_chat_once(
                     quick_music_reply,
                     source="app_chat",
                     turn_id=turn_id,
-                    wait_playback=True,
                 )
             )
 
@@ -2440,7 +2573,6 @@ async def handle_app_chat_once(
                             reply,
                             source="app_chat",
                             turn_id=turn_id,
-                            wait_playback=True,
                         )
                     )
                 await send_music_frames_to_esp32(
@@ -2718,8 +2850,13 @@ async def process_audio_turn(client_id: str, audio_b64: str, history: list[dict]
 
 async def process_realtime_audio(client_id: str, pcm_queue: asyncio.Queue, history: list[dict], turn_id: int) -> None:
     try:
+        stt_started_at = time.monotonic()
         print(f"[Audio] realtime STT start turn_id={turn_id}")
         text = await recognize_queue(pcm_queue)
+        print(
+            f"[STT] realtime done turn_id={turn_id} "
+            f"latency={time.monotonic() - stt_started_at:.3f}s"
+        )
         if not is_current_turn(client_id, turn_id):
             return
 
@@ -2755,6 +2892,53 @@ async def process_realtime_audio(client_id: str, pcm_queue: asyncio.Queue, histo
                 pass
 
 
+async def process_music_barge_audio(
+    client_id: str, pcm_queue: asyncio.Queue, turn_id: int
+) -> None:
+    """Transcribe speech heard during music and ask the LLM only for stop intent."""
+    current = asyncio.current_task()
+    try:
+        started = time.monotonic()
+        text = await recognize_queue(pcm_queue)
+        print(
+            f"[MusicBarge] STT latency={time.monotonic() - started:.3f}s "
+            f"turn_id={turn_id} text={text!r}"
+        )
+        if not text.strip():
+            await send_json_to_esp32(
+                client_id, {"type": "music_barge_result", "stop": False}
+            )
+            return
+
+        await send_json_to_esp32(client_id, {
+            "type": "stt_result",
+            "text": text,
+            "turn_id": turn_id,
+        })
+        should_stop = await classify_music_stop_request(text)
+        await send_json_to_esp32(client_id, {
+            "type": "music_barge_result",
+            "stop": should_stop,
+            "turn_id": turn_id,
+        })
+        if should_stop:
+            await cancel_active_task(client_id)
+            await send_screen_status(
+                client_id, "状态：音乐已停止。", event="music_stop"
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(f"[MusicBarge] error: {exc}")
+        await send_json_to_esp32(
+            client_id, {"type": "music_barge_result", "stop": False}
+        )
+    finally:
+        session = esp32_sessions.get(client_id) or {}
+        if session.get("barge_task") is current:
+            session.pop("barge_task", None)
+
+
 @app.websocket("/ws/esp32")
 async def esp32_endpoint(websocket: WebSocket):
     """
@@ -2769,6 +2953,8 @@ async def esp32_endpoint(websocket: WebSocket):
     client_id = str(id(websocket))
     esp32_clients[client_id] = websocket
     esp32_send_locks[client_id] = asyncio.Lock()
+    esp32_tts_locks[client_id] = asyncio.Lock()
+    esp32_tts_playback_events[client_id] = asyncio.Event()
     esp32_sessions[client_id] = {"turn_id": 0, "connected_at": time.time(), "last_seen_at": time.time()}
     last_active_esp32_id = client_id
     ensure_sensor_poll_task()
@@ -2845,16 +3031,45 @@ async def esp32_endpoint(websocket: WebSocket):
                 if msg_type == "listen":
                     state = data.get("state")
                     if state == "start":
+                        mode = str(data.get("mode") or "auto")
+                        if mode == "music_barge_in":
+                            barge_task = esp32_sessions[client_id].get("barge_task")
+                            if barge_task and not barge_task.done():
+                                esp32_sessions[client_id]["incoming_audio"] = None
+                                continue
+                            turn_id = next_turn_id(client_id)
+                            pcm_queue: asyncio.Queue = asyncio.Queue()
+                            esp32_sessions[client_id]["incoming_audio"] = {
+                                "turn_id": turn_id,
+                                "mode": mode,
+                                "pcm_queue": pcm_queue,
+                                "pcm_buffer": bytearray(),
+                                "decoder": opuslib.Decoder(OPUS_SAMPLE_RATE, OPUS_CHANNELS),
+                                "chunks": 0,
+                                "opus_bytes": 0,
+                            }
+                            task = asyncio.create_task(
+                                process_music_barge_audio(client_id, pcm_queue, turn_id)
+                            )
+                            esp32_sessions[client_id]["barge_task"] = task
+                            print(f"[ESP32] music barge start turn_id={turn_id}")
+                            continue
+
                         # ★ AI 回复进行中 → 丢弃这次录音，不创建 STT 任务
                         active = esp32_sessions[client_id].get("active_task")
                         if active and not active.done():
-                            esp32_sessions[client_id]["incoming_audio"] = None
-                            continue
+                            playback_event = esp32_tts_playback_events.get(client_id)
+                            if playback_event is not None and playback_event.is_set():
+                                await cancel_active_task(client_id)
+                            else:
+                                esp32_sessions[client_id]["incoming_audio"] = None
+                                continue
 
                         turn_id = next_turn_id(client_id)
                         pcm_queue: asyncio.Queue = asyncio.Queue()
                         esp32_sessions[client_id]["incoming_audio"] = {
                             "turn_id": turn_id,
+                            "mode": mode,
                             "pcm_queue": pcm_queue,
                             "pcm_buffer": bytearray(),
                             "decoder": opuslib.Decoder(OPUS_SAMPLE_RATE, OPUS_CHANNELS),
@@ -2940,7 +3155,15 @@ async def esp32_endpoint(websocket: WebSocket):
                     continue
 
                 if msg_type == "abort":
-                    esp32_sessions[client_id].pop("incoming_audio", None)
+                    incoming = esp32_sessions[client_id].pop("incoming_audio", None)
+                    if incoming and incoming.get("mode") == "music_barge_in":
+                        barge_task = esp32_sessions[client_id].pop("barge_task", None)
+                        if barge_task and not barge_task.done():
+                            barge_task.cancel()
+                        await send_json_to_esp32(
+                            client_id, {"type": "music_barge_result", "stop": False}
+                        )
+                        continue
                     await cancel_active_task(client_id)
                     await send_tts_state_to_esp32(client_id, "stop")
                     print(f"[ESP32] abort reason={data.get('reason')}")
@@ -3003,13 +3226,15 @@ async def esp32_endpoint(websocket: WebSocket):
                 elif msg_type == "sensor_data":
                     request_id = data.get("request_id", "")
                     sensor_payload = data.get("data", {})
-                    if isinstance(sensor_payload, dict) and latest_snore_event:
-                        sensor_payload.setdefault("last_snore_event", latest_snore_event)
+                    client_snore_event = snore_cache_by_client.get(client_id)
+                    if isinstance(sensor_payload, dict) and client_snore_event:
+                        sensor_payload.setdefault("last_snore_event", client_snore_event)
                     latest_sensor_data = {
                         "received_at": time.time(),
                         "client_id": client_id,
                         "data": sensor_payload,
                     }
+                    sensor_cache_by_client[client_id] = latest_sensor_data
                     await broadcast_to_apps({
                         "type": "sensor_data",
                         "esp32_connected": True,
@@ -3039,12 +3264,15 @@ async def esp32_endpoint(websocket: WebSocket):
                         "source": data.get("source") or "local_snore_ai",
                     }
                     latest_snore_event = event_payload
+                    snore_cache_by_client[client_id] = event_payload
+                    latest_sensor_data = sensor_cache_by_client.get(client_id)
                     if latest_sensor_data is None:
                         latest_sensor_data = {
                             "received_at": time.time(),
                             "client_id": client_id,
                             "data": {},
                         }
+                        sensor_cache_by_client[client_id] = latest_sensor_data
                     latest_sensor_data["received_at"] = time.time()
                     latest_sensor_data["client_id"] = client_id
                     latest_sensor_data.setdefault("data", {})["last_snore_event"] = event_payload
@@ -3054,6 +3282,12 @@ async def esp32_endpoint(websocket: WebSocket):
                         "data": event_payload,
                         "latest": latest_sensor_data,
                     })
+
+                elif msg_type == "tts_playback_done":
+                    playback_event = esp32_tts_playback_events.get(client_id)
+                    if playback_event is not None:
+                        playback_event.set()
+                    print(f"[ESP32] tts playback done client={client_id}")
 
                 elif msg_type == "ai_persona":
                     persona = data.get("persona") or data.get("mode") or ""
@@ -3177,9 +3411,20 @@ async def esp32_endpoint(websocket: WebSocket):
             await cancel_active_task(client_id)
         except Exception:
             pass
+        barge_task = (esp32_sessions.get(client_id) or {}).get("barge_task")
+        if barge_task and not barge_task.done():
+            barge_task.cancel()
         esp32_clients.pop(client_id, None)
         esp32_send_locks.pop(client_id, None)
+        tts_lock = esp32_tts_locks.pop(client_id, None)
+        esp32_tts_owners.pop(client_id, None)
+        esp32_tts_frame_counts.pop(client_id, None)
+        esp32_tts_playback_events.pop(client_id, None)
+        if tts_lock is not None and tts_lock.locked():
+            tts_lock.release()
         esp32_sessions.pop(client_id, None)
+        sensor_cache_by_client.pop(client_id, None)
+        snore_cache_by_client.pop(client_id, None)
         for command_id, context in list(pc_command_contexts.items()):
             if context.get("client_id") == client_id:
                 pc_command_contexts.pop(command_id, None)
@@ -3191,6 +3436,18 @@ async def esp32_endpoint(websocket: WebSocket):
                     fut.set_result("ESP32 已断开连接")
         if last_active_esp32_id == client_id:
             last_active_esp32_id = pick_esp32_client()
+        if latest_sensor_data and latest_sensor_data.get("client_id") == client_id:
+            latest_sensor_data = max(
+                sensor_cache_by_client.values(),
+                key=lambda item: float(item.get("received_at") or 0),
+                default=None,
+            )
+        if latest_snore_event and latest_snore_event.get("client_id") == client_id:
+            latest_snore_event = max(
+                snore_cache_by_client.values(),
+                key=lambda item: float(item.get("received_at") or 0),
+                default=None,
+            )
 
 
 @app.get("/api/latest_sensors")
@@ -3477,6 +3734,10 @@ async def app_endpoint(websocket: WebSocket):
                 }, ensure_ascii=False))
     except WebSocketDisconnect:
         print(f"[APP] disconnected ({app_id})")
+    except RuntimeError as exc:
+        if "WebSocket is not connected" not in str(exc):
+            raise
+        print(f"[APP] disconnected ({app_id})")
     finally:
         app_clients.pop(app_id, None)
 
@@ -3561,8 +3822,11 @@ async def pc_agent_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
 
     except WebSocketDisconnect:
-        pc_agents.pop(agent_id, None)
         print(f"[PC Agent] 已断开 ({agent_id})")
+    except Exception as exc:
+        print(f"[PC Agent] connection error ({agent_id}): {exc}")
+    finally:
+        pc_agents.pop(agent_id, None)
 
 
 @app.get("/health")

@@ -1,99 +1,92 @@
-"""
-和风天气 API 封装
-
-免费档：每天 1000 次，足够个人使用。
-注册地址：https://dev.qweather.com
-"""
-import asyncio
+"""Weather lookup backed by Photon geocoding and Open-Meteo."""
 import aiohttp
-from config import QWEATHER_API_KEY, LOCATION
+from config import LOCATION
 
-# 和风天气 API 地址
-_GEO_URL = "https://geoapi.qweather.com/v2/city/lookup"
-_NOW_URL = "https://devapi.qweather.com/v7/weather/now"
-_FORECAST_URL = "https://devapi.qweather.com/v7/weather/3d"
-
-# 天气状态码 → 简洁中文描述（节选常用）
-_WEATHER_TEXT_OVERRIDE: dict[str, str] = {}  # 可自定义覆盖
-
+_PHOTON_URL = "https://photon.komoot.io/api/"
+_OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 _TIMEOUT = aiohttp.ClientTimeout(total=8)
 
-
-async def _geo_lookup(city: str) -> str | None:
-    """把城市名转成和风天气的 location ID，失败返回 None。"""
-    if not QWEATHER_API_KEY:
-        return None
-    params = {"location": city, "key": QWEATHER_API_KEY, "number": 1}
-    try:
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(_GEO_URL, params=params) as resp:
-                data = await resp.json()
-        if data.get("code") == "200" and data.get("location"):
-            loc = data["location"][0]
-            return loc["id"]
-    except Exception as exc:
-        print(f"[Weather] geo_lookup error: {exc}")
-    return None
+_OPEN_METEO_CODES = {
+    0: "晴",
+    1: "大部晴朗",
+    2: "多云",
+    3: "阴",
+    45: "有雾",
+    48: "雾凇",
+    51: "小毛毛雨",
+    53: "毛毛雨",
+    55: "较强毛毛雨",
+    61: "小雨",
+    63: "中雨",
+    65: "大雨",
+    71: "小雪",
+    73: "中雪",
+    75: "大雪",
+    80: "阵雨",
+    81: "较强阵雨",
+    82: "强阵雨",
+    95: "雷雨",
+    96: "雷雨伴冰雹",
+    99: "强雷雨伴冰雹",
+}
 
 
 async def get_weather(city: str = "") -> str:
-    """
-    查询指定城市当前天气 + 3 日预报，返回供 LLM 播报的简洁字符串。
+    """Return current weather and a three-day forecast for a city."""
+    city = (city.strip() or LOCATION or "重庆").strip()
+    headers = {"User-Agent": "XiaoAnSmartPillow/1.0"}
+    try:
+        async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=headers) as session:
+            async with session.get(_PHOTON_URL, params={"q": city, "limit": 5}) as resp:
+                resp.raise_for_status()
+                features = (await resp.json()).get("features") or []
+            if not features:
+                return f"找不到城市「{city}」，请确认城市名拼写。"
 
-    city 为空时使用 config.LOCATION（默认用户所在地）。
-    失败时返回说明原因的字符串，不抛异常。
-    """
-    if not QWEATHER_API_KEY:
-        return "天气功能未配置 API key，请在 .env 里填写 QWEATHER_API_KEY。"
+            place = next(
+                (item for item in features
+                 if item.get("properties", {}).get("countrycode") == "CN"),
+                features[0],
+            )
+            longitude, latitude = place["geometry"]["coordinates"]
+            params = {
+                "latitude": latitude,
+                "longitude": longitude,
+                "current": (
+                    "temperature_2m,apparent_temperature,relative_humidity_2m,"
+                    "weather_code,wind_speed_10m,wind_direction_10m"
+                ),
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                "timezone": "auto",
+                "forecast_days": 3,
+            }
+            async with session.get(_OPEN_METEO_URL, params=params) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+    except Exception as exc:
+        print(f"[Weather] Open-Meteo error: {exc}")
+        return "天气数据暂时获取失败，请稍后再试。"
 
-    target_city = (city.strip() or LOCATION or "重庆").strip()
-
-    # 1. 城市 ID 查询
-    location_id = await _geo_lookup(target_city)
-    if not location_id:
-        return f"找不到城市「{target_city}」，请确认城市名拼写。"
-
-    params = {"location": location_id, "key": QWEATHER_API_KEY}
-
-    # 2. 并发请求当前天气 + 3日预报
-    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-        now_task = session.get(_NOW_URL, params=params)
-        forecast_task = session.get(_FORECAST_URL, params=params)
-        try:
-            async with now_task as now_resp, forecast_task as fc_resp:
-                now_data = await now_resp.json()
-                fc_data = await fc_resp.json()
-        except Exception as exc:
-            print(f"[Weather] fetch error: {exc}")
-            return f"天气数据获取失败：{exc}"
-
-    # 3. 解析当前天气
-    if now_data.get("code") != "200":
-        return f"天气 API 返回错误码 {now_data.get('code')}，请检查 API key 是否有效。"
-
-    now = now_data["now"]
-    temp = now.get("temp", "?")
-    feels_like = now.get("feelsLike", "?")
-    text = now.get("text", "?")
-    humidity = now.get("humidity", "?")
-    wind_dir = now.get("windDir", "")
-    wind_scale = now.get("windScale", "")
-
+    current = data.get("current") or {}
+    daily = data.get("daily") or {}
+    code = int(current.get("weather_code", -1))
+    text = _OPEN_METEO_CODES.get(code, f"天气代码{code}")
     lines = [
-        f"{target_city}当前天气：{text}，{temp}°C（体感 {feels_like}°C）",
-        f"湿度 {humidity}%，{wind_dir}{wind_scale}级风",
+        f"{city}当前天气：{text}，{current.get('temperature_2m', '?')}°C"
+        f"（体感 {current.get('apparent_temperature', '?')}°C）",
+        f"湿度 {current.get('relative_humidity_2m', '?')}%，"
+        f"风速 {current.get('wind_speed_10m', '?')}公里每小时",
     ]
-
-    # 4. 解析 3 日预报
-    if fc_data.get("code") == "200" and fc_data.get("daily"):
-        day_labels = ["今天", "明天", "后天"]
-        forecast_parts = []
-        for i, day in enumerate(fc_data["daily"][:3]):
-            label = day_labels[i] if i < len(day_labels) else f"第{i+1}天"
-            day_text = day.get("textDay", "?")
-            t_min = day.get("tempMin", "?")
-            t_max = day.get("tempMax", "?")
-            forecast_parts.append(f"{label}{day_text} {t_min}~{t_max}°C")
-        lines.append("预报：" + "，".join(forecast_parts))
-
+    codes = daily.get("weather_code") or []
+    mins = daily.get("temperature_2m_min") or []
+    maxes = daily.get("temperature_2m_max") or []
+    labels = ["今天", "明天", "后天"]
+    forecast = []
+    for index in range(min(3, len(codes), len(mins), len(maxes))):
+        day_text = _OPEN_METEO_CODES.get(int(codes[index]), "天气未知")
+        forecast.append(
+            f"{labels[index]}{day_text} {mins[index]}~{maxes[index]}°C"
+        )
+    if forecast:
+        lines.append("预报：" + "，".join(forecast))
     return "；".join(lines) + "。"

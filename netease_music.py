@@ -48,6 +48,10 @@ _LEADING_PLAY_RE = re.compile(
     r"^(?:小安)?(?:帮我|给我|可以)?(?:播放|放一下|放一首|放首|放个|放|听一下|听|来一首|来个|我想听)"
 )
 
+_LEADING_FILLER_RE = re.compile(
+    r"^(?:(?:嗯+|呃+|额+|那个|好的?|行|请|麻烦你?)\s*[，,。.!！？?、]*)+"
+)
+
 
 @dataclass(frozen=True)
 class NeteaseSong:
@@ -70,12 +74,20 @@ def extract_music_query(text: str) -> str | None:
     raw = (text or "").strip()
     if not raw:
         return None
+    raw = _LEADING_FILLER_RE.sub("", raw).strip()
 
     compact = re.sub(r"[\s，。！？、,.!?~～]+", "", raw)
     if any(phrase in compact for phrase in MUSIC_STOP_PHRASES):
         return "__stop_music__"
 
-    if not any(word in raw for word in ("播放", "放", "听", "来一首", "来个")):
+    if any(phrase in compact for phrase in (
+        "换一首", "换首", "下一首", "下首", "其他的歌", "别的歌",
+    )):
+        return "华语流行歌曲"
+
+    if not any(word in raw for word in (
+        "播放", "放", "听", "来一首", "来个", "白噪声", "白噪音", "雨声",
+    )):
         return None
 
     query = _LEADING_PLAY_RE.sub("", raw, count=1).strip()
@@ -86,6 +98,37 @@ def extract_music_query(text: str) -> str | None:
     if query in {"歌", "音乐", "歌曲", "一首歌", "一首音乐"}:
         return None
     return query if len(query) >= 2 else None
+
+
+def parse_music_query(query: str) -> tuple[str, str, str, str]:
+    """Return search query, title, artist, and kind for a cleaned request."""
+    cleaned = (query or "").strip("《》“”\"' ，。！？、,.!?~～")
+    if not cleaned:
+        return "", "", "", "unknown"
+
+    match = re.fullmatch(
+        r"(?:歌手)?(.{1,16}?)(?:演唱的|唱的|的)(?:歌曲|歌)?[《“\"]?(.{1,40}?)[》”\"]?",
+        cleaned,
+    )
+    if match:
+        artist = match.group(1).strip("《》“”\"' ，。！？、,.!?~～")
+        title = match.group(2).strip("《》“”\"' ，。！？、,.!?~～")
+        if title in {"歌", "歌曲", "音乐", "作品"}:
+            return artist, "", artist, "artist"
+        if artist and title:
+            return f"{artist} {title}", title, artist, "song"
+
+    match = re.fullmatch(
+        r"[《“\"]?(.{1,40}?)[》”\"]?[，,\s]+(?:歌手)?(.{1,16}?)(?:演唱的?|唱的?)",
+        cleaned,
+    )
+    if match:
+        title = match.group(1).strip("《》“”\"' ，。！？、,.!?~～")
+        artist = match.group(2).strip("《》“”\"' ，。！？、,.!?~～")
+        if artist and title:
+            return f"{artist} {title}", title, artist, "song"
+
+    return cleaned, "", "", "unknown"
 
 
 def _normalize(text: str) -> str:
@@ -350,7 +393,12 @@ async def find_playable_song(
         )
         for song in ranked:
             score = _score_song(query, song, title=title, artist=artist)
-            if score < 0:
+            if score < 0 or (
+                not title
+                and not artist
+                and query not in {"华语流行歌曲", "白噪声", "白噪音", "雨声"}
+                and score <= 0
+            ):
                 continue
             song_id = song.get("id")
             if not song_id:

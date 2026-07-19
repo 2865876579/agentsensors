@@ -170,13 +170,18 @@ async def recognize(audio_frames: list[bytes]) -> str:
 
     # 在子线程运行同步 WebSocket（避免阻塞 asyncio 事件循环）
     import threading
-    t = threading.Thread(target=ws.run_forever)
+    t = threading.Thread(target=ws.run_forever, daemon=True)
     t.start()
 
     # 等待识别完成，最多等 15 秒
-    await asyncio.wait_for(done_event.wait(), timeout=15)
-    ws.close()
-    t.join(timeout=2)
+    try:
+        await asyncio.wait_for(done_event.wait(), timeout=15)
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+        t.join(timeout=2)
 
     if error_text:
         print(f"[STT] xfyun failed: {'; '.join(error_text)[:200]}")
@@ -298,9 +303,13 @@ async def recognize_queue(audio_queue) -> str:
             ws.close()
         except Exception:
             pass
-        thread.join(timeout=2)
+        await asyncio.to_thread(thread.join, 2)
         if not pump_task.done():
             pump_task.cancel()
+        try:
+            await pump_task
+        except asyncio.CancelledError:
+            pass
 
     if error_text:
         print(f"[STT] xfyun realtime failed: {'; '.join(error_text)[:200]}")
