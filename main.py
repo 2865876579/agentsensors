@@ -2710,7 +2710,6 @@ async def handle_app_chat_once(
         return
 
     quick_music_reply = quick_music_preroll_text(user_text)
-    quick_music_preroll_task = None
     if quick_music_reply:
         await send_app_message(websocket, {
             "type": "app_chat_delta",
@@ -2718,15 +2717,6 @@ async def handle_app_chat_once(
             "delta": quick_music_reply,
             "text": quick_music_reply,
         })
-        if allow_device_tts:
-            quick_music_preroll_task = asyncio.create_task(
-                send_tts_stream_to_esp32(
-                    target,
-                    quick_music_reply,
-                    source="app_chat",
-                    turn_id=turn_id,
-                )
-            )
 
     music_intent = await classify_music_request(user_text)
     music_action = music_intent.get("action")
@@ -2765,8 +2755,8 @@ async def handle_app_chat_once(
                 reply = "我来为你找一首合适的音乐。"
 
             async def _music_task() -> None:
-                preroll_task = quick_music_preroll_task
-                if preroll_task is None and allow_device_tts:
+                preroll_task = None
+                if allow_device_tts:
                     preroll_task = asyncio.create_task(
                         send_tts_stream_to_esp32(
                             target,
@@ -2775,16 +2765,24 @@ async def handle_app_chat_once(
                             turn_id=turn_id,
                         )
                     )
-                await send_music_frames_to_esp32(
-                    target,
-                    music_query,
-                    title=music_title,
-                    artist=music_artist,
-                    kind=music_kind,
-                    source="app_chat_music",
-                    turn_id=turn_id,
-                    wait_before_audio=preroll_task,
-                )
+                try:
+                    await send_music_frames_to_esp32(
+                        target,
+                        music_query,
+                        title=music_title,
+                        artist=music_artist,
+                        kind=music_kind,
+                        source="app_chat_music",
+                        turn_id=turn_id,
+                        wait_before_audio=preroll_task,
+                    )
+                finally:
+                    if preroll_task and not preroll_task.done():
+                        preroll_task.cancel()
+                        try:
+                            await preroll_task
+                        except asyncio.CancelledError:
+                            pass
 
             # 防止 ESP32 在任务创建前断开导致 KeyError
             if target in esp32_sessions:
