@@ -184,6 +184,8 @@ SENSOR_POLL_INTERVAL_SEC = 2.0
 device_tts_busy_until: dict[str, float] = {}
 recent_tts_text: dict[str, tuple[str, float]] = {}
 recent_music_stop_at: dict[str, float] = {}
+music_context_by_client: dict[str, dict] = {}
+MUSIC_CONTEXT_TTL_SEC = 90.0
 TTS_PLAYBACK_COOLDOWN_SEC = 4.0
 
 PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 0.10
@@ -197,7 +199,6 @@ AIR_BAD_PPM_THRESHOLD = 2.0
 AIR_BAD_RESET_PPM = 1.5
 DRY_HUMIDITY_THRESHOLD = 45.0
 DRY_HUMIDITY_RESET_PCT = 55.0
-SNORE_TARGET_DELTA_KPA = 0.8
 SNORE_DEFAULT_TARGET_KPA = 4.0
 SNORE_POLICY_COOLDOWN_SEC = 300
 
@@ -445,6 +446,7 @@ async def drop_esp32_client(
     device_tts_busy_until.pop(client_id, None)
     recent_tts_text.pop(client_id, None)
     recent_music_stop_at.pop(client_id, None)
+    music_context_by_client.pop(client_id, None)
     esp32_tts_frame_counts.pop(client_id, None)
     esp32_tts_playback_events.pop(client_id, None)
     sensor_cache_by_client.pop(client_id, None)
@@ -761,6 +763,7 @@ async def send_music_frames_to_esp32(
     source: str = "music",
     turn_id: int | None = None,
     wait_before_audio: asyncio.Task | None = None,
+    song_override=None,
 ) -> bool:
     """Search NetEase Cloud Music and play it through the existing Opus pipeline."""
     if client_id not in esp32_clients:
@@ -787,20 +790,22 @@ async def send_music_frames_to_esp32(
     else:
         search_label = f"《{query}》"
 
-    await send_screen_status(client_id, f"状态：正在搜索{search_label}。", event="music_search")
-    try:
-        song = await find_playable_song(query, title=title, artist=artist, kind=kind)
-    except Exception as exc:
-        print(f"[Music] search failed: {exc}")
-        await send_screen_status(client_id, "状态：音乐搜索失败。", event="music_error")
-        await wait_preroll()
-        await send_tts_stream_to_esp32(
+    song = song_override
+    if song is None:
+        await send_screen_status(client_id, f"状态：正在搜索{search_label}。", event="music_search")
+        try:
+            song = await find_playable_song(query, title=title, artist=artist, kind=kind)
+        except Exception as exc:
+            print(f"[Music] search failed: {exc}")
+            await send_screen_status(client_id, "状态：音乐搜索失败。", event="music_error")
+            await wait_preroll()
+            await send_tts_stream_to_esp32(
             client_id,
             "这首歌暂时没有找到可信的可播放版本。",
-            source=source,
+            source="assistant",
             turn_id=turn_id,
-        )
-        return False
+            )
+            return False
 
     if not song:
         await send_screen_status(client_id, f"状态：没有找到{search_label}的可信可播放版本。", event="music_not_found")
@@ -814,12 +819,17 @@ async def send_music_frames_to_esp32(
         await send_tts_stream_to_esp32(
             client_id,
             fail_text,
-            source=source,
+            source="assistant",
             turn_id=turn_id,
         )
         return False
 
     print(f"[Music] play {song.label} id={song.id} br={song.br}")
+    music_context_by_client[client_id] = {
+        "songs": [song],
+        "created_at": time.monotonic(),
+        "query": query,
+    }
     play_label = f"《{song.name}》 - {song.artists}" if song.artists else f"《{song.name}》"
     await send_screen_status(client_id, f"状态：正在播放{play_label}。", event="music_play")
     await wait_preroll()
@@ -884,21 +894,26 @@ async def answer_music_request_if_needed(
 ) -> bool:
     """Handle play/stop music commands using an LLM semantic classifier."""
     if music_intent is None:
-        if not _music_request_is_likely(text):
+        context_intent = _music_context_intent(client_id, text)
+        if context_intent is not None:
+            music_intent = context_intent
+        elif not _music_request_is_likely(text):
             return False
-        try:
-            music_intent = await asyncio.wait_for(
-                classify_music_request(text), timeout=8.0
-            )
-        except asyncio.TimeoutError:
-            print("[Music] intent classifier timeout")
-            return False
+        else:
+            try:
+                music_intent = await asyncio.wait_for(
+                    classify_music_request(text), timeout=8.0
+                )
+            except asyncio.TimeoutError:
+                print("[Music] intent classifier timeout")
+                return False
     music_action = music_intent.get("action")
     music_query = (music_intent.get("query") or "").strip()
     music_title = (music_intent.get("title") or "").strip()
     music_artist = (music_intent.get("artist") or "").strip()
     music_kind = (music_intent.get("kind") or "").strip()
     music_selection = (music_intent.get("selection") or "").strip()
+    song_override = music_intent.get("_song")
     if music_action not in {"play", "stop"}:
         return False
 
@@ -907,6 +922,7 @@ async def answer_music_request_if_needed(
         duplicate_stop = now - recent_music_stop_at.get(client_id, 0.0) < 2.0
         recent_music_stop_at[client_id] = now
         await send_tts_state_to_esp32(client_id, "stop", source="music", turn_id=turn_id)
+        music_context_by_client.pop(client_id, None)
         await send_screen_status(client_id, "状态：已停止播放音乐。", event="music_stop")
         if not duplicate_stop:
             await send_tts_stream_to_esp32(client_id, "音乐已停止。", source="music", turn_id=turn_id)
@@ -920,6 +936,7 @@ async def answer_music_request_if_needed(
         kind=music_kind,
         source="music",
         turn_id=turn_id,
+        song_override=song_override,
     )
     if not ok:
         print(f"[Music] no playable result for query={music_query!r}")
@@ -1115,8 +1132,8 @@ def _build_snore_policy(
     on_pillow = _is_user_on_pillow(sensor_payload or {})
     calibration = settings.get("pillow_calibration") or {}
     enabled = bool(calibration.get("snore_adjust_enabled", True))
-    saved_kpa = _safe_float(calibration.get("saved_kpa"), SNORE_DEFAULT_TARGET_KPA - SNORE_TARGET_DELTA_KPA)
-    target_kpa = max(0.5, min(5.0, saved_kpa + SNORE_TARGET_DELTA_KPA))
+    saved_kpa = _safe_float(calibration.get("saved_kpa"), SNORE_DEFAULT_TARGET_KPA)
+    target_kpa = max(0.5, min(10.0, saved_kpa))
     if not math.isfinite(target_kpa):
         target_kpa = SNORE_DEFAULT_TARGET_KPA
     return {
@@ -2089,7 +2106,8 @@ def _music_request_is_likely(text: str) -> bool:
     normalized = re.sub(r"\s+", "", str(text or "")).lower()
     music_gate_phrases = (
         "播放", "放一首", "放首", "播一首", "播首", "来一首", "来首",
-        "放歌", "放音乐", "听歌", "音乐", "歌曲", "停止播放", "暂停播放",
+        "想听", "听一首", "听首", "放歌", "放音乐", "听歌", "音乐", "歌曲", "歌", "dj",
+        "停止播放", "暂停播放",
         "停止音乐", "暂停音乐", "关掉音乐", "停歌", "别放了",
     )
     non_music_markers = ("桌面", "文件", "这里", "上面", "下面", "进去")
@@ -2100,6 +2118,47 @@ def _music_request_is_likely(text: str) -> bool:
         any(phrase in normalized for phrase in music_gate_phrases)
         or likely_song_phrase
     )
+
+
+_MUSIC_SELECTION_NUMBERS = {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _music_context_intent(client_id: str, text: str) -> dict | None:
+    """Resolve short confirmations against the last music result, not as a search query."""
+    context = music_context_by_client.get(client_id)
+    if not context or time.monotonic() - float(context.get("created_at") or 0) > MUSIC_CONTEXT_TTL_SEC:
+        music_context_by_client.pop(client_id, None)
+        return None
+    songs = context.get("songs") or []
+    if not songs:
+        return None
+
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if not compact:
+        return None
+    index = None
+    match = re.search(r"第([0-9一二两三四五六七八九])(?:首|个)", compact)
+    if match:
+        token = match.group(1)
+        index = int(token) if token.isdigit() else _MUSIC_SELECTION_NUMBERS.get(token)
+    elif any(marker in compact for marker in ("刚才那首", "上一首", "直接给我播放", "就播放", "播放刚才")):
+        index = 1
+    if index is None or index < 1 or index > len(songs):
+        return None
+    song = songs[index - 1]
+    return {
+        "action": "play",
+        "query": str(context.get("query") or song.name),
+        "title": song.name,
+        "artist": song.artists,
+        "kind": "song",
+        "selection": "specific",
+        "_song": song,
+        "reason": "music_context_selection",
+    }
 
 
 async def _consume_comfort_reply(
@@ -2578,6 +2637,9 @@ def quick_music_preroll_text(text: str) -> str:
     if not any(word in compact for word in play_words):
         return ""
 
+    if any(word in compact for word in ("安静", "舒缓", "轻松", "温柔", "治愈", "不吵", "平静")):
+        return "我找一首安静的给你。"
+
     query = raw
     query = re.sub(r"^(?:小安)?(?:帮我|给我|可以)?(?:播放|放一首|放首|播一首|播首|来一首|来首|听一首|听首)", "", query).strip()
     query = re.sub(r"(?:这首歌|这首|歌曲|音乐)$", "", query).strip()
@@ -2874,8 +2936,8 @@ async def handle_app_chat_once(
             "text": quick_music_reply,
         })
 
-    music_intent = None
-    if _music_request_is_likely(user_text):
+    music_intent = _music_context_intent(target, user_text)
+    if music_intent is None and _music_request_is_likely(user_text):
         try:
             music_intent = await asyncio.wait_for(
                 classify_music_request(user_text), timeout=8.0
@@ -2890,6 +2952,7 @@ async def handle_app_chat_once(
     music_artist = (music_intent.get("artist") or "").strip()
     music_kind = (music_intent.get("kind") or "").strip()
     music_selection = (music_intent.get("selection") or "").strip()
+    song_override = music_intent.get("_song")
     if music_action in {"play", "stop"}:
         if allow_device_status:
             await send_json_to_esp32(target, {
@@ -2902,6 +2965,7 @@ async def handle_app_chat_once(
         if music_action == "stop":
             reply = "音乐已停止。"
             await send_tts_state_to_esp32(target, "stop", source="music", turn_id=turn_id)
+            music_context_by_client.pop(target, None)
             await send_screen_status(target, "状态：已停止播放音乐。", event="music_stop")
             if allow_device_tts:
                 await send_tts_stream_to_esp32(target, reply, source="app_chat", turn_id=turn_id)
@@ -2940,6 +3004,7 @@ async def handle_app_chat_once(
                         source="app_chat_music",
                         turn_id=turn_id,
                         wait_before_audio=preroll_task,
+                        song_override=song_override,
                     )
                 finally:
                     if preroll_task and not preroll_task.done():

@@ -77,6 +77,7 @@ client = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 SYSTEM_PROMPT = """你是"小安"，一个放在用户枕边的语音伴侣。用户通过语音和你聊天，不是在读屏幕。
 
 能力边界：云端已经接入智能闹钟。用户要设置、取消、查询闹钟时，先按现有闹钟流程处理；不要声称“没有闹钟功能”。闹钟支持绝对时间、几秒/几分钟/几小时后，以及到点音乐和枕头唤醒联动。
+云端也已经接入网络音乐直接播放。不要声称“没有直接放歌功能”，也不要让用户改用手机或浏览器；音乐请求由专用音乐链路处理。
 
 性格：
 - 像一个见多识广但不高冷的朋友——有自己的观点，但不咄咄逼人
@@ -420,9 +421,33 @@ async def classify_music_request(user_text: str) -> dict:
         }
 
     compact = re.sub(r"\s+", "", raw)
+    play_words = ("想听", "要听", "听一首", "听", "放一首", "播放", "放点", "来点")
+    scene_queries = (
+        (("dj",), "DJ 舞曲"),
+        (("安静", "舒缓", "轻松", "温柔", "治愈", "不吵", "平静"), "轻音乐 舒缓"),
+        (("摇滚",), "摇滚歌曲"),
+        (("古风",), "古风歌曲"),
+        (("爵士",), "爵士音乐"),
+        (("民谣",), "民谣歌曲"),
+        (("电子",), "电子音乐"),
+        (("纯音乐",), "纯音乐"),
+        (("轻音乐",), "轻音乐"),
+        (("流行",), "流行歌曲"),
+    )
+    normalized_compact = compact.lower()
+    scene_query = next(
+        (query for words, query in scene_queries if any(word in normalized_compact for word in words)),
+        "",
+    )
+    if scene_query and any(word in normalized_compact for word in play_words):
+        return {
+            "action": "play", "query": scene_query, "title": "", "artist": "",
+            "kind": "noise", "selection": "specific", "reason": "fast_scene",
+        }
     music_hints = (
         "歌", "歌曲", "音乐", "曲子", "白噪声", "白噪音", "雨声", "助眠音",
-        "播放", "暂停播放", "停止播放", "下一首", "换一首",
+        "播放", "暂停播放", "停止播放", "下一首", "换一首", "dj", "DJ", "安静", "舒缓",
+        "轻松", "温柔", "治愈", "不吵", "平静", "安眠",
     )
     if not any(hint in compact for hint in music_hints):
         return fallback
@@ -450,6 +475,8 @@ async def classify_music_request(user_text: str) -> dict:
         "\n- 如果用户说'雨声助眠'，selection=noise，query 输出'雨声 白噪音 助眠'，title='雨声助眠'，artist=''。"
         "\n- 如果用户说'放一首适合睡觉的歌'，selection=noise，query 输出'助眠音乐 轻音乐'，kind='noise'。"
         "\n- 如果用户说'来点摇滚'或'放点流行音乐'，selection=specific，query 输出对应曲风，不要保留'来点/放点/音乐'等口语。"
+        "\n- 如果用户说'放一首安静/舒缓/轻松/温柔/治愈的歌'，selection=noise，query 输出'轻音乐 舒缓'，kind='noise'。"
+        "\n- 如果用户说'想听一首比较安静的歌'，必须识别为 action=play、selection=noise、kind='noise'，不能把'比较安静'当作歌名。"
     )
     try:
         response = await client.chat.completions.create(

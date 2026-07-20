@@ -42,7 +42,9 @@ _CJK_REPEAT_RE = re.compile(r"([\u4e00-\u9fff])\1{2,}")
 def _normalize_tts_text(text: str) -> str:
     """Prevent a malformed streaming reply from speaking one CJK character repeatedly."""
     text = _EMOJI_RE.sub("", str(text or ""))
-    return _CJK_REPEAT_RE.sub(r"\1\1", text).strip()
+    # A stream glitch such as "收到到到到到" must become "收到" before
+    # synthesis; keeping two copies still sounds like a stutter on short replies.
+    return _CJK_REPEAT_RE.sub(r"\1", text).strip()
 
 
 def _fade_pcm16_mono(pcm: bytes) -> bytes:

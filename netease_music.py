@@ -86,9 +86,23 @@ def extract_music_query(text: str) -> str | None:
     )):
         return "华语流行歌曲"
 
+    generic_play = any(word in compact for word in (
+        "播放", "放一首", "放首", "放歌", "放音乐", "听一首", "听歌", "来一首",
+    ))
+    generic_residue = compact
+    for token in (
+        "不要在浏览器上找", "别在浏览器上找", "小安", "给我", "帮我", "请", "你",
+        "随便", "随机", "任意", "直接", "播放", "放一首歌", "放一首", "放首歌",
+        "放首", "放歌", "放音乐", "来一首歌", "来一首", "听一首歌", "听一首",
+        "听歌", "音乐", "歌曲", "一首歌", "一首", "首歌", "歌", "一下", "吧", "呀", "啊",
+    ):
+        generic_residue = generic_residue.replace(token, "")
+    if generic_play and not generic_residue:
+        return "__random_music__"
+
     if not any(word in raw for word in (
         "播放", "放一首", "放首", "放歌", "放音乐", "听歌", "听一首",
-        "来一首", "来个", "来点音乐", "白噪声", "白噪音", "雨声",
+        "来一首", "来个", "来点音乐", "白噪声", "白噪音", "雨声", "DJ", "dj",
     )):
         return None
 
@@ -101,7 +115,8 @@ def extract_music_query(text: str) -> str | None:
     # Genre, mood, and scene requests need slot extraction rather than raw search.
     scene_hints = (
         "适合睡觉", "助眠", "放松", "学习", "运动", "摇滚", "流行", "古风",
-        "轻音乐", "纯音乐", "爵士", "民谣", "电子", "氛围",
+        "轻音乐", "纯音乐", "爵士", "民谣", "电子", "氛围", "DJ", "dj", "安静", "舒缓",
+        "轻松", "温柔", "治愈", "不吵", "平静", "安眠", "比较安静",
     )
     if any(hint in query for hint in scene_hints):
         return None
@@ -410,10 +425,12 @@ async def find_playable_song(
             )
         for song in ranked:
             score = _score_song(query, song, title=title, artist=artist)
+            semantic_request = kind in {"random", "noise"}
             if score < 0 or (
                 not title
                 and not artist
                 and query not in {"华语流行歌曲", "白噪声", "白噪音", "雨声"}
+                and not semantic_request
                 and score <= 0
             ):
                 continue
