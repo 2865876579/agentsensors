@@ -40,7 +40,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import time
 import urllib.parse
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from config import SERVER_HOST, SERVER_PORT, TIMEZONE
@@ -169,6 +169,7 @@ app_chat_histories: dict[str, list[dict]] = {}
 app_recent_requests: dict[str, float] = {}
 latest_sensor_data: dict | None = None
 latest_snore_event: dict | None = None
+latest_pc_screenshot: dict | None = None
 sensor_cache_by_client: dict[str, dict] = {}
 snore_cache_by_client: dict[str, dict] = {}
 sensor_poll_task: asyncio.Task | None = None
@@ -201,6 +202,11 @@ DRY_HUMIDITY_THRESHOLD = 45.0
 DRY_HUMIDITY_RESET_PCT = 55.0
 SNORE_DEFAULT_TARGET_KPA = 4.0
 SNORE_POLICY_COOLDOWN_SEC = 300
+
+PC_SCREENSHOT_DIR = Path(__file__).resolve().parent / "runtime_screenshots"
+PC_SCREENSHOT_MAX_BYTES = 2 * 1024 * 1024
+PC_SCREENSHOT_MAX_FILES = 20
+PC_SCREENSHOT_MAX_AGE_SEC = 24 * 60 * 60
 
 automation_states: dict[str, dict] = {}
 
@@ -3936,6 +3942,86 @@ async def esp32_endpoint(websocket: WebSocket):
                 default=None,
             )
 
+def cleanup_pc_screenshots() -> None:
+    PC_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    files = sorted(
+        (path for path in PC_SCREENSHOT_DIR.iterdir() if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    retained = 0
+    for path in files:
+        expired = now - path.stat().st_mtime > PC_SCREENSHOT_MAX_AGE_SEC
+        if expired or retained >= PC_SCREENSHOT_MAX_FILES:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        else:
+            retained += 1
+
+
+@app.post("/api/pc/screenshots")
+async def api_upload_pc_screenshot(request: Request):
+    global latest_pc_screenshot
+    try:
+        declared_length = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid content length")
+    if declared_length > PC_SCREENSHOT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="screenshot is too large")
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > PC_SCREENSHOT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="screenshot is too large")
+        chunks.append(chunk)
+    image_data = b"".join(chunks)
+    if image_data.startswith(b"\xff\xd8\xff"):
+        extension = "jpg"
+        media_type = "image/jpeg"
+    elif image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        extension = "png"
+        media_type = "image/png"
+    else:
+        raise HTTPException(status_code=415, detail="only JPEG and PNG screenshots are accepted")
+
+    filename = f"pc_{uuid.uuid4().hex[:24]}.{extension}"
+    path = PC_SCREENSHOT_DIR / filename
+    await asyncio.to_thread(PC_SCREENSHOT_DIR.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(path.write_bytes, image_data)
+    await asyncio.to_thread(cleanup_pc_screenshots)
+    payload = {
+        "type": "pc_screenshot",
+        "id": filename.rsplit(".", 1)[0],
+        "url": f"/api/pc/screenshots/{filename}",
+        "filename": filename,
+        "media_type": media_type,
+        "size": len(image_data),
+        "created_at": time.time(),
+    }
+    latest_pc_screenshot = payload
+    await broadcast_to_apps(payload)
+    return {"ok": True, **payload}
+
+
+@app.get("/api/pc/screenshots/{filename}")
+async def api_get_pc_screenshot(filename: str):
+    if not re.fullmatch(r"pc_[0-9a-f]{24}\.(?:jpg|png)", filename):
+        raise HTTPException(status_code=404, detail="screenshot not found")
+    path = PC_SCREENSHOT_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="screenshot not found")
+    media_type = "image/jpeg" if path.suffix == ".jpg" else "image/png"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
 
 @app.get("/api/latest_sensors")
 async def api_latest_sensors():
@@ -4063,6 +4149,7 @@ async def app_endpoint(websocket: WebSocket):
         "esp32_connected": bool(esp32_clients),
         "latest": latest_sensor_data,
         "latest_snore_event": latest_snore_event,
+        "latest_pc_screenshot": latest_pc_screenshot,
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
         "alarm_state": dict(alarm_runtime),

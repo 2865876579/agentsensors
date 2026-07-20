@@ -29,6 +29,7 @@ import json
 import os
 import sys
 import urllib.parse
+import urllib.request
 import webbrowser
 import websockets
 
@@ -46,6 +47,30 @@ except Exception:
 
 # 云端服务 WebSocket 地址
 WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/pc_agent")
+
+
+def cloud_http_url(path: str) -> str:
+    parsed = urllib.parse.urlparse(WS_URL)
+    scheme = "https" if parsed.scheme == "wss" else "http"
+    return urllib.parse.urlunparse((scheme, parsed.netloc, path, "", "", ""))
+
+
+def upload_screenshot(path: str) -> dict:
+    with open(path, "rb") as image_file:
+        image_data = image_file.read(2 * 1024 * 1024 + 1)
+    if len(image_data) > 2 * 1024 * 1024:
+        raise ValueError("截图压缩后仍超过 2MB")
+    request = urllib.request.Request(
+        cloud_http_url("/api/pc/screenshots"),
+        data=image_data,
+        headers={"Content-Type": "image/jpeg"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not payload.get("ok") or not payload.get("url"):
+        raise RuntimeError("云端没有返回截图地址")
+    return payload
 
 
 def extract_search_query_from_url(url: str) -> str | None:
@@ -172,23 +197,39 @@ async def handle_command(command: dict) -> str:
             return f"写入剪贴板失败: {e}"
 
     elif action == "screenshot":
-        # 截屏保存到桌面
+        # Save one compressed copy locally, then upload it outside the voice WebSocket.
         import subprocess
         from datetime import datetime
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(desktop, f"screenshot_{ts}.png")
+        filename = f"screenshot_{ts}.jpg"
+        path = os.path.join(desktop, filename)
+        escaped_path = path.replace("'", "''")
         try:
-            subprocess.run([
+            result = subprocess.run([
                 "powershell", "-NoProfile", "-Command",
-                f"Add-Type -AssemblyName System.Windows.Forms; "
-                f"[System.Windows.Forms.Screen]::PrimaryScreen().Bounds | "
-                f"ForEach-Object {{ $bmp = New-Object System.Drawing.Bitmap "
-                f"$_.Width,$_.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); "
-                f"$g.CopyFromScreen($_.X,$_.Y,0,0,$_.Size); "
-                f"$bmp.Save('{path}'); $g.Dispose(); $bmp.Dispose() }}"
-            ], capture_output=True, timeout=10)
-            return f"截图已保存到桌面：screenshot_{ts}.png"
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "Add-Type -AssemblyName System.Drawing; "
+                "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+                "$src=[System.Drawing.Bitmap]::new($b.Width,$b.Height); "
+                "$g=[System.Drawing.Graphics]::FromImage($src); "
+                "$g.CopyFromScreen($b.X,$b.Y,0,0,$b.Size); $g.Dispose(); "
+                "$max=1280; "
+                "if($src.Width -gt $max){ "
+                "$h=[int]($src.Height*$max/$src.Width); "
+                "$dst=[System.Drawing.Bitmap]::new($max,$h); "
+                "$g2=[System.Drawing.Graphics]::FromImage($dst); "
+                "$g2.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; "
+                "$g2.DrawImage($src,0,0,$max,$h); $g2.Dispose(); "
+                f"$dst.Save('{escaped_path}',[System.Drawing.Imaging.ImageFormat]::Jpeg); $dst.Dispose(); "
+                f"}} else {{ $src.Save('{escaped_path}',[System.Drawing.Imaging.ImageFormat]::Jpeg) }}; "
+                "$src.Dispose()"
+            ], capture_output=True, text=True, timeout=15)
+            if result.returncode != 0 or not os.path.isfile(path):
+                detail = (result.stderr or result.stdout or "截图文件未生成").strip()
+                return f"截图失败: {detail[:160]}"
+            await asyncio.to_thread(upload_screenshot, path)
+            return f"截图已发送到 App，并保存到桌面：{filename}"
         except Exception as e:
             return f"截图失败: {e}"
 
