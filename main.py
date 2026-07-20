@@ -1113,8 +1113,12 @@ def ensure_sensor_poll_task() -> None:
 
 
 def _get_automation_state(client_id: str) -> dict:
+    session = esp32_sessions.get(client_id) or {}
+    state_key = str(
+        session.get("device_id") or session.get("session_id") or client_id
+    )
     state = automation_states.setdefault(
-        client_id,
+        state_key,
         {
             "pending_environment_prompt": None,
             "last_comfort_prompt_at": 0.0,
