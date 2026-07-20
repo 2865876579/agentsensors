@@ -557,6 +557,39 @@ input[type=range]{
   padding:7px 3px 1px;
   color:var(--muted);
 }
+.bubble.file-card{
+  width:min(88%,560px);
+  max-width:88%;
+  padding:8px;
+}
+.bubble.file-card a{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr);
+  gap:10px;
+  align-items:center;
+  color:inherit;
+  text-decoration:none;
+}
+.bubble.file-card .file-kind{
+  display:grid;
+  place-items:center;
+  width:42px;
+  height:42px;
+  border:1px solid rgba(130,231,255,.28);
+  border-radius:6px;
+  color:#9feeff;
+  font-size:11px;
+  font-weight:900;
+}
+.bubble.file-card .file-name{
+  overflow-wrap:anywhere;
+  font-weight:800;
+}
+.bubble.file-card small{
+  display:block;
+  margin-top:2px;
+  color:var(--muted);
+}
 .screenshot-viewer{
   position:fixed;
   inset:0;
@@ -3158,6 +3191,7 @@ let appWs=null;
 let appWsTimer=null;
 const appChatReplies=new Map();
 const seenPcScreenshots=new Set();
+const seenPcFiles=new Set();
 let appChatBusyRequestId='';
 let appChatLastText='';
 let appChatLastSentAt=0;
@@ -3742,6 +3776,42 @@ function openPcScreenshot(url){
   viewer.classList.add('open');
   document.body.style.overflow='hidden';
 }
+function formatFileBytes(value){
+  const bytes=Math.max(0,Number(value)||0);
+  if(bytes<1024)return bytes+' B';
+  if(bytes<1024*1024)return (bytes/1024).toFixed(1)+' KB';
+  return (bytes/1024/1024).toFixed(1)+' MB';
+}
+function appendPcFileBubble(msg){
+  const id=String(msg.id || msg.filename || msg.url || '');
+  if(!id || !msg.url || seenPcFiles.has(id))return;
+  seenPcFiles.add(id);
+  const chat=document.getElementById('chat') || document.getElementById('pcChat');
+  if(!chat)return;
+  const name=String(msg.original_name || msg.filename || '电脑文件');
+  const extension=(name.split('.').pop() || 'FILE').slice(0,5).toUpperCase();
+  const box=document.createElement('div');
+  box.className='bubble file-card';
+  const link=document.createElement('a');
+  link.href=new URL(msg.url,APP_API_BASE + '/').href;
+  link.download=name;
+  const kind=document.createElement('span');
+  kind.className='file-kind';
+  kind.textContent=extension;
+  const detail=document.createElement('span');
+  const filename=document.createElement('span');
+  filename.className='file-name';
+  filename.textContent=name;
+  const meta=document.createElement('small');
+  meta.textContent=formatFileBytes(msg.size)+' · 点击下载';
+  detail.appendChild(filename);
+  detail.appendChild(meta);
+  link.appendChild(kind);
+  link.appendChild(detail);
+  box.appendChild(link);
+  chat.appendChild(box);
+  scrollChatToBottom(chat);
+}
 function sendAiChatText(){
   const input=document.getElementById('aiInput');
   const text=input.value.trim();
@@ -3823,6 +3893,7 @@ function connectAppWs(){
     if(msg.type==='sensor_data' || msg.type==='app_hello'){
       if(msg.latest_snore_event && typeof msg.latest_snore_event==='object')latestSnoreEvent=msg.latest_snore_event;
       if(msg.latest_pc_screenshot)appendPcScreenshotBubble(msg.latest_pc_screenshot);
+      if(Array.isArray(msg.latest_pc_files))msg.latest_pc_files.slice().reverse().forEach(appendPcFileBubble);
       updateTelemetry(msg);
       if(msg.settings)applySettings(msg.settings,msg.quiet_status);
       if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
@@ -3841,6 +3912,9 @@ function connectAppWs(){
     }else if(msg.type==='pc_screenshot'){
       appendPcScreenshotBubble(msg);
       show('电脑截图已发送到 App');
+    }else if(msg.type==='pc_file'){
+      appendPcFileBubble(msg);
+      show('电脑文件已发送到 App');
     }else if(msg.type==='avatar_generated'){
       if(msg.manifest)updateAvatarPreview(msg.manifest);
       setAvatarStatus('新的 AI 形象已生成，可同步 LCD。');

@@ -55,6 +55,7 @@ TTS_STYLE_DEGREE = float(os.getenv("TTS_STYLE_DEGREE", "1.2"))
 # 密钥管理：控制台右上角头像 → 访问控制 → 密钥管理
 VOLC_APP_ID = os.getenv("VOLC_APP_ID", "")
 VOLC_API_KEY = os.getenv("VOLC_API_KEY", "")
+PC_AGENT_UPLOAD_TOKEN = os.getenv("PC_AGENT_UPLOAD_TOKEN", "")
 VOLC_RESOURCE_ID = os.getenv("VOLC_RESOURCE_ID", "seed-tts-2.0")
 VOLC_VOICE_TYPE = os.getenv("VOLC_VOICE_TYPE", "zh_male_xionger_uranus_bigtts")
 # 语速 -500~+500（0=正常，正数=加快，负数=减慢），默认 +20 偏快

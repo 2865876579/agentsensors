@@ -22,6 +22,7 @@ import asyncio
 import base64
 import random
 import re
+import secrets
 import uuid
 import opuslib
 from contextlib import asynccontextmanager
@@ -43,7 +44,7 @@ import urllib.parse
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from config import SERVER_HOST, SERVER_PORT, TIMEZONE
+from config import PC_AGENT_UPLOAD_TOKEN, SERVER_HOST, SERVER_PORT, TIMEZONE
 from stt_xunfei import recognize, recognize_queue
 from llm_deepseek import (
     chat_stream,
@@ -170,6 +171,7 @@ app_recent_requests: dict[str, float] = {}
 latest_sensor_data: dict | None = None
 latest_snore_event: dict | None = None
 latest_pc_screenshot: dict | None = None
+latest_pc_files: list[dict] = []
 sensor_cache_by_client: dict[str, dict] = {}
 snore_cache_by_client: dict[str, dict] = {}
 sensor_poll_task: asyncio.Task | None = None
@@ -207,6 +209,21 @@ PC_SCREENSHOT_DIR = Path(__file__).resolve().parent / "runtime_screenshots"
 PC_SCREENSHOT_MAX_BYTES = 2 * 1024 * 1024
 PC_SCREENSHOT_MAX_FILES = 20
 PC_SCREENSHOT_MAX_AGE_SEC = 24 * 60 * 60
+PC_FILE_DIR = Path(__file__).resolve().parent / "runtime_pc_files"
+PC_FILE_MAX_BYTES = 15 * 1024 * 1024
+PC_FILE_MAX_FILES = 30
+PC_FILE_MAX_AGE_SEC = 7 * 24 * 60 * 60
+PC_FILE_MEDIA_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
 
 automation_states: dict[str, dict] = {}
 
@@ -231,7 +248,8 @@ async def _pc_command_cb(action: str, params: dict, client_id: str, turn_id: int
         return "发送命令失败，电脑可能断开了"
 
     try:
-        result = await asyncio.wait_for(future, timeout=20.0)
+        timeout = 60.0 if action in {"create_office_file", "send_file_to_app", "send_wechat_file"} else 25.0
+        result = await asyncio.wait_for(future, timeout=timeout)
         return result
     except asyncio.TimeoutError:
         return "电脑操作超时，请确认 PC Agent 还在运行"
@@ -3942,18 +3960,18 @@ async def esp32_endpoint(websocket: WebSocket):
                 default=None,
             )
 
-def cleanup_pc_screenshots() -> None:
-    PC_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+def cleanup_managed_files(directory: Path, max_files: int, max_age_sec: int) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
     now = time.time()
     files = sorted(
-        (path for path in PC_SCREENSHOT_DIR.iterdir() if path.is_file()),
+        (path for path in directory.iterdir() if path.is_file()),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     retained = 0
     for path in files:
-        expired = now - path.stat().st_mtime > PC_SCREENSHOT_MAX_AGE_SEC
-        if expired or retained >= PC_SCREENSHOT_MAX_FILES:
+        expired = now - path.stat().st_mtime > max_age_sec
+        if expired or retained >= max_files:
             try:
                 path.unlink()
             except OSError:
@@ -3962,9 +3980,20 @@ def cleanup_pc_screenshots() -> None:
             retained += 1
 
 
+def cleanup_pc_screenshots() -> None:
+    cleanup_managed_files(PC_SCREENSHOT_DIR, PC_SCREENSHOT_MAX_FILES, PC_SCREENSHOT_MAX_AGE_SEC)
+
+
+def require_pc_upload_token(request: Request) -> None:
+    provided = request.headers.get("x-pc-agent-token") or ""
+    if not PC_AGENT_UPLOAD_TOKEN or not secrets.compare_digest(provided, PC_AGENT_UPLOAD_TOKEN):
+        raise HTTPException(status_code=401, detail="invalid PC Agent token")
+
+
 @app.post("/api/pc/screenshots")
 async def api_upload_pc_screenshot(request: Request):
     global latest_pc_screenshot
+    require_pc_upload_token(request)
     try:
         declared_length = int(request.headers.get("content-length") or 0)
     except ValueError:
@@ -4019,6 +4048,78 @@ async def api_get_pc_screenshot(filename: str):
     return FileResponse(
         path,
         media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@app.post("/api/pc/files")
+async def api_upload_pc_file(request: Request):
+    global latest_pc_files
+    require_pc_upload_token(request)
+    try:
+        declared_length = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid content length")
+    if declared_length > PC_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="file is too large")
+
+    original_name = Path(urllib.parse.unquote(request.headers.get("x-file-name") or "")).name
+    suffix = Path(original_name).suffix.lower()
+    if not original_name or suffix not in PC_FILE_MEDIA_TYPES:
+        raise HTTPException(status_code=415, detail="unsupported file type")
+
+    await asyncio.to_thread(PC_FILE_DIR.mkdir, parents=True, exist_ok=True)
+    file_id = f"pcf_{uuid.uuid4().hex[:24]}"
+    path = PC_FILE_DIR / f"{file_id}{suffix}"
+    part_path = PC_FILE_DIR / f".{file_id}.part"
+    total = 0
+    try:
+        with part_path.open("wb") as file_obj:
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > PC_FILE_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="file is too large")
+                file_obj.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="empty file")
+        await asyncio.to_thread(part_path.replace, path)
+    finally:
+        if part_path.exists():
+            part_path.unlink(missing_ok=True)
+
+    await asyncio.to_thread(cleanup_managed_files, PC_FILE_DIR, PC_FILE_MAX_FILES, PC_FILE_MAX_AGE_SEC)
+    download_name = urllib.parse.quote(original_name)
+    payload = {
+        "type": "pc_file",
+        "id": file_id,
+        "url": f"/api/pc/files/{path.name}?name={download_name}",
+        "filename": path.name,
+        "original_name": original_name,
+        "media_type": PC_FILE_MEDIA_TYPES[suffix],
+        "size": total,
+        "created_at": time.time(),
+    }
+    latest_pc_files = [payload, *(item for item in latest_pc_files if item.get("id") != file_id)][:10]
+    await broadcast_to_apps(payload)
+    return {"ok": True, **payload}
+
+
+@app.get("/api/pc/files/{filename}")
+async def api_get_pc_file(filename: str, name: str | None = None):
+    if not re.fullmatch(r"pcf_[0-9a-f]{24}\.[a-z0-9]+", filename):
+        raise HTTPException(status_code=404, detail="file not found")
+    path = PC_FILE_DIR / filename
+    suffix = path.suffix.lower()
+    if suffix not in PC_FILE_MEDIA_TYPES or not path.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    download_name = Path(name or filename).name
+    if Path(download_name).suffix.lower() != suffix:
+        download_name = filename
+    return FileResponse(
+        path,
+        media_type=PC_FILE_MEDIA_TYPES[suffix],
+        filename=download_name,
+        content_disposition_type="attachment",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 
@@ -4150,6 +4251,7 @@ async def app_endpoint(websocket: WebSocket):
         "latest": latest_sensor_data,
         "latest_snore_event": latest_snore_event,
         "latest_pc_screenshot": latest_pc_screenshot,
+        "latest_pc_files": latest_pc_files,
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
         "alarm_state": dict(alarm_runtime),
@@ -4436,6 +4538,7 @@ WEB_MEDIA_TYPES = {
     "xiaoan-smart-pillow.apk": "application/vnd.android.package-archive",
     "xiaoan-smart-pillow-v1.0.1.apk": "application/vnd.android.package-archive",
     "xiaoan-smart-pillow-v1.0.2.apk": "application/vnd.android.package-archive",
+    "xiaoan-smart-pillow-v1.0.3.apk": "application/vnd.android.package-archive",
 }
 
 
@@ -4495,6 +4598,11 @@ async def h5_apk_v101():
 @app.get("/xiaoan-smart-pillow-v1.0.2.apk")
 async def h5_apk_v102():
     return web_file_response("xiaoan-smart-pillow-v1.0.2.apk")
+
+
+@app.get("/xiaoan-smart-pillow-v1.0.3.apk")
+async def h5_apk_v103():
+    return web_file_response("xiaoan-smart-pillow-v1.0.3.apk")
 
 
 @app.get("/h5/{filename}")
