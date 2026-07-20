@@ -87,7 +87,8 @@ def extract_music_query(text: str) -> str | None:
         return "华语流行歌曲"
 
     if not any(word in raw for word in (
-        "播放", "放", "听", "来一首", "来个", "来点", "白噪声", "白噪音", "雨声",
+        "播放", "放一首", "放首", "放歌", "放音乐", "听歌", "听一首",
+        "来一首", "来个", "来点音乐", "白噪声", "白噪音", "雨声",
     )):
         return None
 

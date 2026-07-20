@@ -1919,25 +1919,18 @@ def _is_comfort_decline(text: str) -> bool:
     }
 
 
-async def maybe_prompt_comfort_music(
-    client_id: str,
-    text: str,
-    settings: dict,
-    turn_id: int,
-) -> bool:
-    """Ask once whether to play music after an LLM-confirmed emotional cue."""
+async def _prepare_comfort_prompt(client_id: str, text: str) -> str | None:
+    """Create one pending comfort prompt after a gated semantic check."""
     if not _may_need_comfort(text):
-        return False
+        return None
     state = _get_automation_state(client_id)
     now = time.time()
     if state.get("pending_environment_prompt"):
-        return False
+        return None
     if now - float(state.get("last_comfort_prompt_at") or 0.0) < COMFORT_REPLY_COOLDOWN_SEC:
-        return False
-    if is_ai_voice_blocked(settings):
-        return False
+        return None
     if not await classify_emotional_need(text):
-        return False
+        return None
 
     proposal = "听起来你今天有点累，要不要我放一段合适的音乐陪你缓一会儿？你也可以直接告诉我想听什么。"
     state["last_comfort_prompt_at"] = now
@@ -1946,6 +1939,23 @@ async def maybe_prompt_comfort_music(
         "proposal": proposal,
         "expires_at": now + ENVIRONMENT_REPLY_TIMEOUT_SEC,
     }
+    return proposal
+
+
+async def maybe_prompt_comfort_music(
+    client_id: str,
+    text: str,
+    settings: dict,
+    turn_id: int,
+) -> bool:
+    """Ask once whether to play music after an LLM-confirmed emotional cue."""
+    if is_ai_voice_blocked(settings):
+        return False
+    proposal = await _prepare_comfort_prompt(client_id, text)
+    if not proposal:
+        return False
+
+    state = _get_automation_state(client_id)
     await send_screen_status(client_id, "状态：我在听你的心情。", event="comfort_prompt")
     if not await send_tts_stream_to_esp32(
         client_id, proposal, source="comfort", turn_id=turn_id
@@ -1997,7 +2007,11 @@ async def _consume_comfort_reply(
         await answer_music_request_if_needed(
             client_id, user_text, turn_id, music_intent=music_intent
         )
-        return ""
+        if music_intent.get("action") == "stop":
+            return "音乐已停止。"
+        if music_intent.get("selection") == "random" or music_intent.get("kind") == "random":
+            return "我随便为你挑一首。"
+        return "好，我来播放。"
 
     # This was a one-shot confirmation channel. Unrelated content is ignored
     # instead of leaking into the normal command/tool path.
@@ -2688,6 +2702,7 @@ async def handle_app_chat_once(
     music_title = (music_intent.get("title") or "").strip()
     music_artist = (music_intent.get("artist") or "").strip()
     music_kind = (music_intent.get("kind") or "").strip()
+    music_selection = (music_intent.get("selection") or "").strip()
     if music_action in {"play", "stop"}:
         if allow_device_status:
             await send_json_to_esp32(target, {
@@ -2753,6 +2768,28 @@ async def handle_app_chat_once(
             "type": "app_chat_done",
             "request_id": request_id,
             "text": reply,
+            "turn_id": turn_id,
+            "device_tts": allow_device_tts,
+            "quiet_status": quiet_status,
+        })
+        return
+
+    comfort_prompt = await _prepare_comfort_prompt(target, user_text)
+    if comfort_prompt:
+        await send_app_message(websocket, {
+            "type": "app_chat_delta",
+            "request_id": request_id,
+            "delta": comfort_prompt,
+            "text": comfort_prompt,
+        })
+        if allow_device_tts:
+            await send_tts_stream_to_esp32(
+                target, comfort_prompt, source="comfort", turn_id=turn_id
+            )
+        await send_app_message(websocket, {
+            "type": "app_chat_done",
+            "request_id": request_id,
+            "text": comfort_prompt,
             "turn_id": turn_id,
             "device_tts": allow_device_tts,
             "quiet_status": quiet_status,
