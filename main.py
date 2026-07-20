@@ -62,11 +62,13 @@ from llm_deepseek import (
     set_led_callback,
     set_ir_device_callback,
     set_read_sensors_callback,
+    set_sleep_report_callback,
     set_didi_ride_link_callback,
 )
 from tts_volc import synthesize
 from netease_music import find_playable_song, iter_song_opus_frames
 from web_search import search_web  # 搜索工具，供后续 function calling 工具接入时使用
+from sleep_reports import SleepHistory
 from user_settings import (
     get_quiet_status,
     is_ai_screen_blocked,
@@ -172,6 +174,7 @@ latest_sensor_data: dict | None = None
 latest_snore_event: dict | None = None
 latest_pc_screenshot: dict | None = None
 latest_pc_files: list[dict] = []
+latest_sleep_reports: list[dict] = []
 sensor_cache_by_client: dict[str, dict] = {}
 snore_cache_by_client: dict[str, dict] = {}
 sensor_poll_task: asyncio.Task | None = None
@@ -213,6 +216,11 @@ PC_FILE_DIR = Path(__file__).resolve().parent / "runtime_pc_files"
 PC_FILE_MAX_BYTES = 15 * 1024 * 1024
 PC_FILE_MAX_FILES = 30
 PC_FILE_MAX_AGE_SEC = 7 * 24 * 60 * 60
+SLEEP_REPORT_DIR = Path(__file__).resolve().parent / "runtime_sleep_reports"
+SLEEP_REPORT_MAX_FILES = 30
+SLEEP_REPORT_MAX_AGE_SEC = 30 * 24 * 60 * 60
+SLEEP_HISTORY_DB = Path(__file__).resolve().parent / "sleep_history.sqlite3"
+sleep_history = SleepHistory(SLEEP_HISTORY_DB, TIMEZONE)
 PC_FILE_MEDIA_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -376,6 +384,56 @@ async def _read_sensors_cb(client_id: str, turn_id: int) -> str:
 
 # 注册回调
 
+
+def stable_device_key(client_id: str | None = None) -> str:
+    """Return a persistent key for sleep history: device_id > session_id > websocket id."""
+    session = esp32_sessions.get(client_id or "") or {}
+    for candidate in (session.get("device_id"), session.get("session_id"), client_id):
+        value = str(candidate or "").strip().lower()
+        if value:
+            return value
+    return "default"
+
+
+async def _sleep_report_cb(client_id: str, turn_id: int) -> str:
+    """LLM tool callback: build the latest sleep report in cloud and push it to the App."""
+    global latest_sleep_reports
+    target = pick_esp32_client(client_id)
+    device_key = stable_device_key(target or client_id) if (target or client_id) else ""
+    session_id = await asyncio.to_thread(sleep_history.latest_session_id, device_key)
+    if session_id is None and device_key:
+        session_id = await asyncio.to_thread(sleep_history.latest_session_id, "")
+    if session_id is None:
+        return "目前还没有有效在床记录。只有FSR压力达到0.1N以后，云端才会开始记录睡眠数据。"
+    try:
+        report = await asyncio.to_thread(sleep_history.build_report, session_id, SLEEP_REPORT_DIR)
+    except LookupError as exc:
+        return str(exc)
+    except Exception as exc:
+        print(f"[sleep_report] build failed session={session_id}: {exc}")
+        return "睡眠报告生成失败，请稍后再试。"
+
+    path = Path(report["path"])
+    await asyncio.to_thread(cleanup_managed_files, SLEEP_REPORT_DIR, SLEEP_REPORT_MAX_FILES, SLEEP_REPORT_MAX_AGE_SEC)
+    download_name = urllib.parse.quote(str(report.get("original_name") or path.name))
+    payload = {
+        "type": "sleep_report",
+        "id": f"sleep_{session_id}",
+        "url": f"/api/sleep/reports/{path.name}?name={download_name}",
+        "filename": path.name,
+        "original_name": report.get("original_name") or path.name,
+        "media_type": "text/html; charset=utf-8",
+        "size": path.stat().st_size if path.exists() else 0,
+        "created_at": time.time(),
+        "summary": report.get("summary") or "睡眠报告已生成",
+        "metrics": report.get("metrics") or {},
+    }
+    latest_sleep_reports = [payload, *(item for item in latest_sleep_reports if item.get("id") != payload["id"])][:10]
+    await broadcast_to_apps(payload)
+    if target:
+        await send_screen_status(target, "状态：睡眠报告已发送到手机App。", event="sleep_report")
+    return f"{payload['summary']} 我已经把详细睡眠报告发到手机App。"
+
 async def _didi_ride_link_cb(
     from_place: str,
     to_place: str,
@@ -410,6 +468,7 @@ set_pillow_callback(_pillow_cb)
 set_led_callback(_led_cb)
 set_ir_device_callback(_ir_device_cb)
 set_read_sensors_callback(_read_sensors_cb)
+set_sleep_report_callback(_sleep_report_cb)
 set_didi_ride_link_callback(_didi_ride_link_cb)
 
 
@@ -3746,6 +3805,16 @@ async def esp32_endpoint(websocket: WebSocket):
                         "data": sensor_payload,
                     }
                     sensor_cache_by_client[client_id] = latest_sensor_data
+                    if isinstance(sensor_payload, dict):
+                        try:
+                            await asyncio.to_thread(
+                                sleep_history.record_sensor,
+                                stable_device_key(client_id),
+                                sensor_payload,
+                                time.time(),
+                            )
+                        except Exception as exc:
+                            print(f"[sleep_history] record_sensor failed client={client_id}: {exc}")
                     await broadcast_to_apps({
                         "type": "sensor_data",
                         "esp32_connected": True,
@@ -3776,6 +3845,15 @@ async def esp32_endpoint(websocket: WebSocket):
                     }
                     latest_snore_event = event_payload
                     snore_cache_by_client[client_id] = event_payload
+                    try:
+                        await asyncio.to_thread(
+                            sleep_history.record_snore,
+                            stable_device_key(client_id),
+                            event_payload,
+                            time.time(),
+                        )
+                    except Exception as exc:
+                        print(f"[sleep_history] record_snore failed client={client_id}: {exc}")
                     latest_sensor_data = sensor_cache_by_client.get(client_id)
                     if latest_sensor_data is None:
                         latest_sensor_data = {
@@ -4124,6 +4202,25 @@ async def api_get_pc_file(filename: str, name: str | None = None):
     )
 
 
+@app.get("/api/sleep/reports/{filename}")
+async def api_get_sleep_report(filename: str, name: str | None = None):
+    if not re.fullmatch(r"sleep_[0-9]+\.html", filename):
+        raise HTTPException(status_code=404, detail="sleep report not found")
+    path = SLEEP_REPORT_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="sleep report not found")
+    download_name = Path(name or filename).name
+    if Path(download_name).suffix.lower() != ".html":
+        download_name = filename
+    return FileResponse(
+        path,
+        media_type="text/html; charset=utf-8",
+        filename=download_name,
+        content_disposition_type="attachment",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 @app.get("/api/latest_sensors")
 async def api_latest_sensors():
     return {
@@ -4252,6 +4349,7 @@ async def app_endpoint(websocket: WebSocket):
         "latest_snore_event": latest_snore_event,
         "latest_pc_screenshot": latest_pc_screenshot,
         "latest_pc_files": latest_pc_files,
+        "latest_sleep_reports": latest_sleep_reports,
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
         "alarm_state": dict(alarm_runtime),

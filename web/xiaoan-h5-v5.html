@@ -3894,6 +3894,7 @@ function connectAppWs(){
       if(msg.latest_snore_event && typeof msg.latest_snore_event==='object')latestSnoreEvent=msg.latest_snore_event;
       if(msg.latest_pc_screenshot)appendPcScreenshotBubble(msg.latest_pc_screenshot);
       if(Array.isArray(msg.latest_pc_files))msg.latest_pc_files.slice().reverse().forEach(appendPcFileBubble);
+      if(Array.isArray(msg.latest_sleep_reports))msg.latest_sleep_reports.slice().reverse().forEach(appendPcFileBubble);
       updateTelemetry(msg);
       if(msg.settings)applySettings(msg.settings,msg.quiet_status);
       if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
@@ -3915,6 +3916,9 @@ function connectAppWs(){
     }else if(msg.type==='pc_file'){
       appendPcFileBubble(msg);
       show('电脑文件已发送到 App');
+    }else if(msg.type==='sleep_report'){
+      appendPcFileBubble(msg);
+      show('睡眠报告已发送到 App');
     }else if(msg.type==='avatar_generated'){
       if(msg.manifest)updateAvatarPreview(msg.manifest);
       setAvatarStatus('新的 AI 形象已生成，可同步 LCD。');
