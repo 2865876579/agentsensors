@@ -275,6 +275,41 @@ async def generate_automation_reply(
         return fallback
 
 
+async def generate_sleep_greeting(recent_greetings: list[str] | None = None) -> str:
+    """Generate a fresh, non-repetitive greeting for a new pillow arrival."""
+    recent = [str(item).strip() for item in (recent_greetings or []) if str(item).strip()][-5:]
+    recent_text = "\n".join(f"- {item}" for item in recent) or "- 无"
+    system = (
+        "你是小安，一位有审美、有分寸的枕边语音伴侣。"
+        f"当前时间：{_get_time_string()}。用户所在地：{LOCATION}。"
+        f"\n{build_ai_context_prompt()}"
+        "\n用户刚刚躺下。请现场创作一句每次都不同的中文主动问候。"
+        "要求：30到65个汉字，一到两句；有具体画面或新鲜隐喻，但不过度抒情；"
+        "温柔、有一点智慧，像真正了解生活的人，而不是客服或鸡汤文案；"
+        "不要提问，不要求用户回复，不提传感器、系统、模式；"
+        "避免使用‘你躺好了’‘今晚我会守着你’‘今天辛苦了’‘好好休息’等固定套话；"
+        "只输出最终要说的话，不加引号、标题或解释。"
+    )
+    user = f"最近已经说过这些句子，请避开相同意象、句式和措辞：\n{recent_text}"
+    try:
+        response = await client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=192,
+            temperature=1.05,
+        )
+        text = re.sub(r"\s+", " ", (response.choices[0].message.content or "").strip())
+        text = text.strip('“”\"')
+        if 18 <= len(text) <= 100 and text not in recent:
+            return text
+    except Exception as exc:
+        print(f"[LLM] generate_sleep_greeting error: {exc}")
+    return ""
+
+
 async def classify_environment_adjustment_reply(user_text: str, proposal: str) -> str:
     def parse_intent(text: str) -> str | None:
         raw = str(text or "").strip()

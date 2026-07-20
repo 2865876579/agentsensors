@@ -55,6 +55,7 @@ from llm_deepseek import (
     classify_comfort_reply,
     classify_environment_adjustment_reply,
     generate_automation_reply,
+    generate_sleep_greeting,
     set_pc_command_callback,
     set_pillow_callback,
     set_led_callback,
@@ -1119,6 +1120,7 @@ def _get_automation_state(client_id: str) -> dict:
             "last_comfort_prompt_at": 0.0,
             "sleep_greeting_in_progress": False,
             "sleep_greeting_in_progress_until": 0.0,
+            "recent_sleep_greetings": [],
             "light_alarm_active": False,
             "fan_alarm_active": False,
             "humidifier_alarm_active": False,
@@ -2256,8 +2258,12 @@ async def handle_sleep_greeting_trigger(
     try:
         await send_screen_status(client_id, "状态：检测到躺下，正在进行关怀问候。", event="sleep_greeting")
         print(f"[就寝] 开始生成主动问候: {day_key}")
-        line_index = sum(ord(ch) for ch in day_key) % len(SLEEP_GREETING_LINES)
-        reply = SLEEP_GREETING_LINES[line_index]
+        recent = list(state.get("recent_sleep_greetings") or [])[-5:]
+        reply = await generate_sleep_greeting(recent)
+        if not reply:
+            candidates = [line for line in SLEEP_GREETING_LINES if line not in recent]
+            reply = random.choice(candidates or SLEEP_GREETING_LINES)
+        state["recent_sleep_greetings"] = (recent + [reply])[-5:]
 
         print(f"[就寝] 主动问候回复: {reply}")
         ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
