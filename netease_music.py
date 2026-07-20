@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import random
 import re
 import time
 import urllib.request
@@ -45,7 +46,7 @@ MUSIC_STOP_PHRASES = (
 )
 
 _LEADING_PLAY_RE = re.compile(
-    r"^(?:小安)?(?:帮我|给我|可以)?(?:播放|放一下|放一首|放首|放个|放|听一下|听|来一首|来个|我想听)"
+    r"^(?:小安)?(?:(?:随便|随机|任意)\s*)?(?:帮我|给我|可以)?(?:播放|放一下|放一首|放首|放个|放|听一下|听|来一首|来个|来点|我想听)"
 )
 
 _LEADING_FILLER_RE = re.compile(
@@ -86,16 +87,27 @@ def extract_music_query(text: str) -> str | None:
         return "华语流行歌曲"
 
     if not any(word in raw for word in (
-        "播放", "放", "听", "来一首", "来个", "白噪声", "白噪音", "雨声",
+        "播放", "放", "听", "来一首", "来个", "来点", "白噪声", "白噪音", "雨声",
     )):
         return None
 
+    random_request = any(word in compact for word in ("随便", "随机", "任意"))
     query = _LEADING_PLAY_RE.sub("", raw, count=1).strip()
     query = re.sub(r"^(?:一下|一首|一个|点|些|音乐|歌曲|歌)\s*", "", query)
     query = re.sub(r"(?:这首歌|这首|歌曲|音乐|给我听|听听|吧|一下)$", "", query).strip()
     query = query.strip("《》“”\"' ，。！？、,.!?~～")
 
-    if query in {"歌", "音乐", "歌曲", "一首歌", "一首音乐"}:
+    # Genre, mood, and scene requests need slot extraction rather than raw search.
+    scene_hints = (
+        "适合睡觉", "助眠", "放松", "学习", "运动", "摇滚", "流行", "古风",
+        "轻音乐", "纯音乐", "爵士", "民谣", "电子", "氛围",
+    )
+    if any(hint in query for hint in scene_hints):
+        return None
+
+    if query in {"", "歌", "音乐", "歌曲", "一首歌", "一首音乐"}:
+        if random_request or "来点" in compact:
+            return "__random_music__"
         return None
     return query if len(query) >= 2 else None
 
@@ -386,11 +398,15 @@ async def find_playable_song(
         if not songs:
             return None
 
-        ranked = sorted(
-            songs,
-            key=lambda item: _score_song(query, item, title=title, artist=artist),
-            reverse=True,
-        )
+        if kind == "random":
+            ranked = list(songs)
+            random.shuffle(ranked)
+        else:
+            ranked = sorted(
+                songs,
+                key=lambda item: _score_song(query, item, title=title, artist=artist),
+                reverse=True,
+            )
         for song in ranked:
             score = _score_song(query, song, title=title, artist=artist)
             if score < 0 or (

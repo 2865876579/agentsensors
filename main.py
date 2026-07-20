@@ -51,7 +51,9 @@ from llm_deepseek import (
     classify_didi_ride_request,
     classify_music_request,
     classify_music_stop_request,
-    classify_pre_sleep_light_reply,
+    classify_emotional_need,
+    classify_comfort_reply,
+    classify_environment_adjustment_reply,
     generate_automation_reply,
     set_pc_command_callback,
     set_pillow_callback,
@@ -65,7 +67,6 @@ from netease_music import find_playable_song, iter_song_opus_frames
 from web_search import search_web  # 搜索工具，供后续 function calling 工具接入时使用
 from user_settings import (
     get_quiet_status,
-    get_upcoming_quiet_period,
     is_ai_screen_blocked,
     is_ai_voice_blocked,
     load_user_settings,
@@ -117,6 +118,16 @@ WAKE_REPLY_NIGHT = (
     "嗯，我在，慢慢说。",
 )
 SLEEP_GREETING_TRIGGER_TEXT = "用户刚刚躺下了，请温柔地主动问候一句"
+SLEEP_GREETING_LINES = (
+    "今天辛苦了，未完成的事先交给明天，今晚让自己被安静温柔地接住。",
+    "把白天的风尘留在门外吧，这一刻不必证明什么，只管安心躺好。",
+    "你不必每一天都赢，今晚先让疲惫退潮，愿你在柔软的梦里重新蓄满光。",
+    "夜色已经替你关掉喧嚣，剩下的时间，留给呼吸、好梦和真正的放松。",
+    "那些暂时无解的事先放一放，今晚的你只需要好好休息，明天再带着力量出发。",
+    "愿这一晚像一场温柔的雨，把今天的疲惫一点点洗净，醒来时心里仍有光。",
+    "你已经走过很长的一天了，现在把自己交给枕头，剩下的路让梦替你走一程。",
+    "晚安不是结束，而是把自己重新充满电的开始，今晚请允许自己什么都不做。",
+)
 EXIT_REPLY_TEXT = "好的，再见小安。"
 EXIT_PHRASES = (
     "再见小安",
@@ -170,13 +181,13 @@ SENSOR_POLL_INTERVAL_SEC = 2.0
 device_tts_busy_until: dict[str, float] = {}
 TTS_PLAYBACK_COOLDOWN_SEC = 4.0
 
-PRE_SLEEP_WINDOW_MINUTES = 10
-SLEEP_GREETING_WINDOW_MINUTES = 180
 PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 0.10
 ALARM_FSR_ON_THRESHOLD_N = 0.10
 ALARM_FSR_OFF_THRESHOLD_N = 0.10
 PRE_SLEEP_LIGHT_THRESHOLD_LUX = 140.0
-PRE_SLEEP_REPLY_TIMEOUT_SEC = 30.0
+PRE_SLEEP_LIGHT_RESET_LUX = 100.0
+ENVIRONMENT_REPLY_TIMEOUT_SEC = 90.0
+COMFORT_REPLY_COOLDOWN_SEC = 120.0
 AIR_BAD_PPM_THRESHOLD = 2.0
 AIR_BAD_RESET_PPM = 1.5
 DRY_HUMIDITY_THRESHOLD = 45.0
@@ -408,8 +419,7 @@ def is_sleep_greeting_trigger(text: str) -> bool:
     raw = str(text or "").strip()
     if raw == SLEEP_GREETING_TRIGGER_TEXT:
         return True
-    # ESP32 ??? send_text_with_persona() ????? [AI_PERSONA=...] ???
-    # ??????????????????????????????? listen_once?
+    # ESP32 may prepend the current persona on separate lines.
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     return any(line == SLEEP_GREETING_TRIGGER_TEXT for line in lines)
 
@@ -819,14 +829,20 @@ async def send_music_frames_to_esp32(
     return frame_count > 0
 
 
-async def answer_music_request_if_needed(client_id: str, text: str, turn_id: int) -> bool:
+async def answer_music_request_if_needed(
+    client_id: str,
+    text: str,
+    turn_id: int,
+    music_intent: dict | None = None,
+) -> bool:
     """Handle play/stop music commands using an LLM semantic classifier."""
-    music_intent = await classify_music_request(text)
+    music_intent = music_intent or await classify_music_request(text)
     music_action = music_intent.get("action")
     music_query = (music_intent.get("query") or "").strip()
     music_title = (music_intent.get("title") or "").strip()
     music_artist = (music_intent.get("artist") or "").strip()
     music_kind = (music_intent.get("kind") or "").strip()
+    music_selection = (music_intent.get("selection") or "").strip()
     if music_action not in {"play", "stop"}:
         return False
 
@@ -1099,22 +1115,21 @@ def _get_automation_state(client_id: str) -> dict:
     state = automation_states.setdefault(
         client_id,
         {
-            "pending_light_prompt": None,
-            "last_pre_sleep_prompt_key": "",
+            "pending_environment_prompt": None,
+            "last_comfort_prompt_at": 0.0,
             "sleep_greeting_in_progress": False,
             "sleep_greeting_in_progress_until": 0.0,
-            "last_on_pillow": None,
-            "sleep_period_key": "",
-            "sleep_period_started_on_pillow": False,
-            "sleep_greeting_late_allowed_key": "",
+            "light_alarm_active": False,
             "fan_alarm_active": False,
             "humidifier_alarm_active": False,
+            "fan_auto_on": False,
+            "humidifier_auto_on": False,
             "worker_task": None,
         },
     )
-    pending = state.get("pending_light_prompt")
+    pending = state.get("pending_environment_prompt")
     if pending and float(pending.get("expires_at") or 0) <= time.time():
-        state["pending_light_prompt"] = None
+        state["pending_environment_prompt"] = None
     return state
 
 
@@ -1134,49 +1149,6 @@ def _is_user_on_pillow(sensor_payload: dict) -> bool:
             if _safe_float(item.get("n")) >= PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N:
                 return True
     return False
-
-
-def _current_sleep_quiet_key(quiet_status: dict) -> str:
-    """Return a stable key for the active night-sleep period, otherwise empty."""
-    if not quiet_status or not quiet_status.get("active"):
-        return ""
-    period = quiet_status.get("period") or {}
-    if str(period.get("name") or "") != "night_sleep":
-        return ""
-    day_key = str(quiet_status.get("now") or "")[:10]
-    return f"night_sleep:{day_key}:{period.get('start')}:{period.get('end')}"
-
-
-def _update_sleep_arrival_state(client_id: str, sensor_payload: dict, settings: dict) -> None:
-    """Track whether the user was already on the pillow when night sleep started.
-
-    Night sleep is silent by default. If the user was not on the pillow at the
-    sleep start window and later lies down, one gentle proactive reminder is allowed.
-    """
-    state = _get_automation_state(client_id)
-    on_pillow = _is_user_on_pillow(sensor_payload)
-    quiet_status = get_quiet_status(settings)
-    sleep_key = _current_sleep_quiet_key(quiet_status)
-    prev_on_pillow = state.get("last_on_pillow")
-
-    if sleep_key:
-        if state.get("sleep_period_key") != sleep_key:
-            state["sleep_period_key"] = sleep_key
-            state["sleep_period_started_on_pillow"] = bool(on_pillow)
-            if on_pillow and prev_on_pillow is False:
-                state["sleep_greeting_late_allowed_key"] = sleep_key
-            elif not on_pillow:
-                state["sleep_greeting_late_allowed_key"] = sleep_key
-            else:
-                state["sleep_greeting_late_allowed_key"] = ""
-        elif prev_on_pillow is False and on_pillow and not state.get("sleep_period_started_on_pillow"):
-            state["sleep_greeting_late_allowed_key"] = sleep_key
-    else:
-        state["sleep_period_key"] = ""
-        state["sleep_period_started_on_pillow"] = False
-        state["sleep_greeting_late_allowed_key"] = ""
-
-    state["last_on_pillow"] = bool(on_pillow)
 
 
 def _alarm_now() -> datetime:
@@ -1813,13 +1785,21 @@ def _dialog_busy(client_id: str) -> bool:
     return bool(session.get("incoming_audio"))
 
 
-async def send_screen_status(client_id: str, text: str, *, event: str = "") -> bool:
+async def send_screen_status(
+    client_id: str,
+    text: str,
+    *,
+    event: str = "",
+    duration_ms: int = 0,
+) -> bool:
     text = str(text or "").strip()
     if not text:
         return False
     payload = {"type": "screen_status", "msg": text}
     if event:
         payload["event"] = event
+    if duration_ms > 0:
+        payload["duration_ms"] = min(int(duration_ms), 600000)
     ok = await send_json_to_esp32(client_id, payload) if client_id else False
     await broadcast_to_apps({
         "type": "automation_status",
@@ -1846,7 +1826,10 @@ async def _emit_automation_notice(
     return await send_tts_stream_to_esp32(client_id, text, source="automation")
 
 
-async def request_one_shot_listen(client_id: str, reason: str) -> bool:
+async def request_environment_reply_listen(
+    client_id: str,
+    reason: str = "environment_adjustment_reply",
+) -> bool:
     return await send_json_to_esp32(client_id, {
         "type": "listen_once",
         "reason": reason,
@@ -1884,180 +1867,348 @@ async def _apply_pre_sleep_light_action(client_id: str, action: str) -> bool:
     return False
 
 
-async def _consume_pre_sleep_light_reply(
+async def _apply_environment_action(client_id: str, pending: dict) -> bool:
+    device = str(pending.get("device") or "")
+    action = str(pending.get("action") or "")
+    if device == "led":
+        return await _apply_pre_sleep_light_action(client_id, action)
+    if device not in {"fan", "humidifier", "air_conditioner"}:
+        return False
+
+    ok = await send_json_to_esp32(client_id, {
+        "type": "ir_cmd",
+        "device": device,
+        "action": action,
+    })
+    if ok:
+        cache_key = {
+            "fan": "fan_on",
+            "humidifier": "humidifier_on",
+            "air_conditioner": "air_conditioner_on",
+        }[device]
+        _update_cached_switch_state(client_id, cache_key, action == "on")
+    return ok
+
+
+COMFORT_GATE_PHRASES = (
+    "我很累", "很累", "今天好累", "好累", "有点累", "太累", "累了", "累死", "心情很差", "心情不好", "情绪很差",
+    "好烦", "烦", "压力好大", "压力很大", "撑不住", "不想说话", "很孤单",
+    "好孤单", "难受", "疲惫", "烦死了", "崩溃", "郁闷", "沮丧", "低落",
+)
+
+
+def _may_need_comfort(text: str) -> bool:
+    """Cheap gate: avoid an extra LLM call for ordinary utterances."""
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    return bool(normalized) and any(phrase in normalized for phrase in COMFORT_GATE_PHRASES)
+
+
+def _is_comfort_affirmative(text: str) -> bool:
+    normalized = re.sub(r"[，。！？、,.!?\s]+", "", str(text or "")).lower()
+    return normalized in {
+        "好", "好的", "可以", "行", "嗯", "嗯嗯", "要", "想听", "放吧",
+        "好啊", "可以啊", "行啊", "麻烦你了", "谢谢你",
+    }
+
+
+def _is_comfort_decline(text: str) -> bool:
+    normalized = re.sub(r"[，。！？、,.!?\s]+", "", str(text or "")).lower()
+    return normalized in {
+        "不用", "不用了", "不需要", "不要", "先不用", "不想听", "别放",
+        "不用放", "不放了", "算了", "不用谢谢",
+    }
+
+
+async def maybe_prompt_comfort_music(
+    client_id: str,
+    text: str,
+    settings: dict,
+    turn_id: int,
+) -> bool:
+    """Ask once whether to play music after an LLM-confirmed emotional cue."""
+    if not _may_need_comfort(text):
+        return False
+    state = _get_automation_state(client_id)
+    now = time.time()
+    if state.get("pending_environment_prompt"):
+        return False
+    if now - float(state.get("last_comfort_prompt_at") or 0.0) < COMFORT_REPLY_COOLDOWN_SEC:
+        return False
+    if is_ai_voice_blocked(settings):
+        return False
+    if not await classify_emotional_need(text):
+        return False
+
+    proposal = "听起来你今天有点累，要不要我放一段合适的音乐陪你缓一会儿？你也可以直接告诉我想听什么。"
+    state["last_comfort_prompt_at"] = now
+    state["pending_environment_prompt"] = {
+        "kind": "comfort",
+        "proposal": proposal,
+        "expires_at": now + ENVIRONMENT_REPLY_TIMEOUT_SEC,
+    }
+    await send_screen_status(client_id, "状态：我在听你的心情。", event="comfort_prompt")
+    if not await send_tts_stream_to_esp32(
+        client_id, proposal, source="comfort", turn_id=turn_id
+    ):
+        state["pending_environment_prompt"] = None
+        return False
+    if not await request_environment_reply_listen(client_id, "comfort_reply"):
+        state["pending_environment_prompt"] = None
+        return False
+    return True
+
+
+async def _consume_comfort_reply(
+    client_id: str,
+    user_text: str,
+    pending: dict,
+    *,
+    allow_voice: bool,
+    turn_id: int,
+) -> str:
+    state = _get_automation_state(client_id)
+    state["pending_environment_prompt"] = None
+
+    if _is_comfort_decline(user_text):
+        reply = "好，那我先不放音乐。我听着。"
+        if allow_voice:
+            await send_tts_stream_to_esp32(client_id, reply, source="comfort", turn_id=turn_id)
+        return reply
+
+    music_intent = await classify_music_request(user_text)
+    if _is_comfort_affirmative(user_text):
+        music_intent = {
+            "action": "play", "query": "华语流行歌曲", "title": "", "artist": "",
+            "kind": "random", "selection": "random",
+        }
+    elif music_intent.get("action") not in {"play", "stop"}:
+        comfort_action = await classify_comfort_reply(user_text)
+        if comfort_action == "play":
+            music_intent = {
+                "action": "play", "query": "华语流行歌曲", "title": "", "artist": "",
+                "kind": "random", "selection": "random",
+            }
+        elif comfort_action == "decline":
+            reply = "好，那我先不放音乐。我听着。"
+            if allow_voice:
+                await send_tts_stream_to_esp32(client_id, reply, source="comfort", turn_id=turn_id)
+            return reply
+    if music_intent.get("action") in {"play", "stop"}:
+        await answer_music_request_if_needed(
+            client_id, user_text, turn_id, music_intent=music_intent
+        )
+        return ""
+
+    # This was a one-shot confirmation channel. Unrelated content is ignored
+    # instead of leaking into the normal command/tool path.
+    return ""
+
+
+async def _consume_environment_adjustment_reply(
     client_id: str,
     user_text: str,
     *,
     allow_voice: bool,
+    turn_id: int = 0,
 ) -> str | None:
     state = _get_automation_state(client_id)
-    pending = state.get("pending_light_prompt")
+    pending = state.get("pending_environment_prompt")
     if not pending:
         return None
 
-    state["pending_light_prompt"] = None
-    action = await classify_pre_sleep_light_reply(user_text)
+    state["pending_environment_prompt"] = None
+    if pending.get("kind") == "comfort":
+        return await _consume_comfort_reply(
+            client_id,
+            user_text,
+            pending,
+            allow_voice=allow_voice,
+            turn_id=turn_id,
+        )
+    intent = await classify_environment_adjustment_reply(
+        user_text,
+        str(pending.get("proposal") or "环境调整"),
+    )
 
-    if action == "off":
-        ok = await _apply_pre_sleep_light_action(client_id, "off")
-        reply = "已帮你关掉灯带。" if ok else "我收到关灯请求了，但灯带暂时没有响应。"
-    elif action == "dim":
-        ok = await _apply_pre_sleep_light_action(client_id, "dim")
-        reply = "已把灯光调暗一点。" if ok else "我收到调暗请求了，但灯带暂时没有响应。"
+    if intent == "approve":
+        ok = await _apply_environment_action(client_id, pending)
+        auto_key = str(pending.get("auto_key") or "")
+        if ok and auto_key:
+            state[auto_key] = True
+        reply = str(pending.get("success_text") if ok else pending.get("failure_text"))
+    elif intent == "decline":
+        reply = "好，这次先不调整。"
     else:
-        reply = "好，那我先不动灯光。"
+        await send_json_to_esp32(client_id, {
+            "type": "status",
+            "turn_id": turn_id,
+        })
+        return ""
 
     await _emit_automation_notice(
         client_id,
         reply,
-        event="pre_sleep_light_reply",
+        event="environment_adjustment_reply",
         allow_voice=allow_voice,
     )
     return reply
 
 
-async def _maybe_prompt_pre_sleep_light(client_id: str, sensor_payload: dict, settings: dict) -> None:
-    upcoming = get_upcoming_quiet_period(settings, PRE_SLEEP_WINDOW_MINUTES)
+def _is_active_sleep_period(settings: dict) -> bool:
     quiet_status = get_quiet_status(settings)
-    in_sleep_period = bool(quiet_status.get("active"))
-    if not upcoming.get("active") and not in_sleep_period:
-        return
+    period = quiet_status.get("period") or {}
+    return bool(
+        quiet_status.get("active") and
+        str(period.get("name") or "") in {"night_sleep", "nap"}
+    )
 
+
+async def _queue_environment_prompt(client_id: str, pending: dict) -> bool:
     state = _get_automation_state(client_id)
-    if upcoming.get("active"):
-        window_key = str(upcoming.get("window_key") or "")
-        reply = "快到睡觉时间了，房间光线有点亮，要我帮你关灯或调暗吗？"
-    else:
-        period = quiet_status.get("period") or {}
-        now_key = str(quiet_status.get("now") or "")[:10]
-        period_name = str(period.get("name") or "sleep")
-        window_key = f"sleep-light:{period_name}:{now_key}"
-        reply = "你已经躺下了，房间光线偏亮，要我帮你关灯或调暗吗？"
+    if state.get("pending_environment_prompt") or _dialog_busy(client_id):
+        return False
 
-    if window_key and state.get("last_pre_sleep_prompt_key") == window_key:
-        return
-    if state.get("pending_light_prompt"):
-        return
-    if _dialog_busy(client_id):
-        return
-
-    light_lux = _safe_float(sensor_payload.get("light_lux"))
-    if not _is_user_on_pillow(sensor_payload):
-        return
-    if light_lux < PRE_SLEEP_LIGHT_THRESHOLD_LUX:
-        return
-
-    state["last_pre_sleep_prompt_key"] = window_key or f"pre-sleep:{int(time.time())}"
-    state["pending_light_prompt"] = {
-        "expires_at": time.time() + PRE_SLEEP_REPLY_TIMEOUT_SEC,
-        "window_key": window_key,
-    }
-    allow_voice = not is_ai_voice_blocked(settings)
+    pending = dict(pending)
+    pending["expires_at"] = time.time() + ENVIRONMENT_REPLY_TIMEOUT_SEC
+    state["pending_environment_prompt"] = pending
     voice_sent = await _emit_automation_notice(
         client_id,
-        reply,
-        event="pre_sleep_light_prompt",
-        allow_voice=allow_voice,
+        str(pending["proposal"]),
+        event="environment_adjustment_prompt",
+        allow_voice=True,
     )
-    if voice_sent:
-        await request_one_shot_listen(client_id, "pre_sleep_light_reply")
+    if not voice_sent:
+        state["pending_environment_prompt"] = None
+        return False
+    if not await request_environment_reply_listen(client_id):
+        state["pending_environment_prompt"] = None
+        return False
+    return True
+
+
+async def _execute_sleep_environment_action(
+    client_id: str,
+    pending: dict,
+    state: dict,
+) -> bool:
+    ok = await _apply_environment_action(client_id, pending)
+    if not ok:
+        return False
+    auto_key = str(pending.get("auto_key") or "")
+    if auto_key:
+        state[auto_key] = True
+    await send_screen_status(
+        client_id,
+        str(pending["success_text"]),
+        event="sleep_environment_adjustment",
+        duration_ms=5000,
+    )
+    return True
+
+
+async def _handle_environment_alert(
+    client_id: str,
+    pending: dict,
+    settings: dict,
+    state: dict,
+) -> bool:
+    if _is_active_sleep_period(settings):
+        if not settings.get("quiet_rules", {}).get("allow_sleep_environment_control", True):
+            return False
+        return await _execute_sleep_environment_action(client_id, pending, state)
+    return await _queue_environment_prompt(client_id, pending)
+
+
+async def _maybe_adjust_light(client_id: str, sensor_payload: dict, settings: dict) -> None:
+    if not sensor_payload.get("light_valid") or not _is_user_on_pillow(sensor_payload):
+        return
+    state = _get_automation_state(client_id)
+    light_lux = _safe_float(sensor_payload.get("light_lux"))
+    if light_lux <= PRE_SLEEP_LIGHT_RESET_LUX:
+        state["light_alarm_active"] = False
+        return
+    if light_lux < PRE_SLEEP_LIGHT_THRESHOLD_LUX or state.get("light_alarm_active"):
+        return
+
+    pending = {
+        "device": "led",
+        "action": "off",
+        "proposal": "房间光线偏亮，要我帮你关掉灯带吗？",
+        "success_text": "已帮你关掉灯带。",
+        "failure_text": "灯带暂时没有响应。",
+    }
+    if await _handle_environment_alert(client_id, pending, settings, state):
+        state["light_alarm_active"] = True
 
 
 async def _maybe_auto_control_environment(client_id: str, sensor_payload: dict, settings: dict) -> None:
     state = _get_automation_state(client_id)
-    allow_voice = not is_ai_voice_blocked(settings)
 
     if sensor_payload.get("mq135_valid"):
         ppm = _safe_float(sensor_payload.get("mq135_ppm"))
         if ppm >= AIR_BAD_PPM_THRESHOLD and not state.get("fan_alarm_active"):
-            state["fan_alarm_active"] = True
-            await send_json_to_esp32(client_id, {
-                "type": "ir_cmd",
+            pending = {
                 "device": "fan",
                 "action": "on",
-            })
-            _update_cached_switch_state(client_id, "fan_on", True)
-            reply = await generate_automation_reply(
-                f"空气质量已经偏差，我准备打开风扇处理一下。当前读数大约是 {ppm:.2f}。"
-                "请用一句自然的话告诉用户你已经在处理空气问题。"
-            )
-            await _emit_automation_notice(
-                client_id,
-                reply,
-                event="auto_fan_on",
-                allow_voice=allow_voice,
-            )
-        elif ppm < AIR_BAD_RESET_PPM and state.get("fan_alarm_active"):
-            state["fan_alarm_active"] = False
-            await send_json_to_esp32(client_id, {
-                "type": "ir_cmd",
-                "device": "fan",
-                "action": "off",
-            })
-            _update_cached_switch_state(client_id, "fan_on", False)
-            reply = await generate_automation_reply(
-                f"空气已经恢复正常，我准备把风扇关掉。当前读数大约是 {ppm:.2f}。"
-                "请用一句自然的话告诉用户风扇已经关掉。"
-            )
-            await _emit_automation_notice(
-                client_id,
-                reply,
-                event="auto_fan_off",
-                allow_voice=allow_voice,
-            )
+                "proposal": f"空气质量偏差，当前读数约 {ppm:.2f}，要我打开风扇吗？",
+                "success_text": "已打开风扇改善空气。",
+                "failure_text": "风扇暂时没有响应。",
+                "auto_key": "fan_auto_on",
+            }
+            if await _handle_environment_alert(client_id, pending, settings, state):
+                state["fan_alarm_active"] = True
         elif ppm < AIR_BAD_RESET_PPM:
             state["fan_alarm_active"] = False
+            if state.get("fan_auto_on"):
+                stopped = await _apply_environment_action(client_id, {
+                    "device": "fan",
+                    "action": "off",
+                })
+                if stopped:
+                    state["fan_auto_on"] = False
+                    await send_screen_status(
+                        client_id,
+                        "空气质量已恢复，风扇已关闭。",
+                        event="environment_recovered",
+                        duration_ms=5000,
+                    )
 
     if sensor_payload.get("env_valid"):
         humidity = _safe_float(sensor_payload.get("humidity_pct"))
         if humidity < DRY_HUMIDITY_THRESHOLD and not state.get("humidifier_alarm_active"):
-            state["humidifier_alarm_active"] = True
-            await send_json_to_esp32(client_id, {
-                "type": "ir_cmd",
+            pending = {
                 "device": "humidifier",
                 "action": "on",
-            })
-            _update_cached_switch_state(client_id, "humidifier_on", True)
-            reply = await generate_automation_reply(
-                f"环境开始偏干了，我准备打开加湿器。当前湿度大约是 {humidity:.1f}% 。"
-                "请用一句自然的话告诉用户你已经在处理干燥问题。"
-            )
-            await _emit_automation_notice(
-                client_id,
-                reply,
-                event="auto_humidifier_on",
-                allow_voice=allow_voice,
-            )
-        elif humidity > DRY_HUMIDITY_RESET_PCT and state.get("humidifier_alarm_active"):
-            state["humidifier_alarm_active"] = False
-            await send_json_to_esp32(client_id, {
-                "type": "ir_cmd",
-                "device": "humidifier",
-                "action": "off",
-            })
-            _update_cached_switch_state(client_id, "humidifier_on", False)
-            reply = await generate_automation_reply(
-                f"湿度已经回到合适范围，我准备把加湿器关掉。当前湿度大约是 {humidity:.1f}% 。"
-                "请用一句自然的话告诉用户加湿器已经关掉。"
-            )
-            await _emit_automation_notice(
-                client_id,
-                reply,
-                event="auto_humidifier_off",
-                allow_voice=allow_voice,
-            )
+                "proposal": f"室内湿度偏低，当前约 {humidity:.1f}%，要我打开加湿器吗？",
+                "success_text": "已打开加湿器。",
+                "failure_text": "加湿器暂时没有响应。",
+                "auto_key": "humidifier_auto_on",
+            }
+            if await _handle_environment_alert(client_id, pending, settings, state):
+                state["humidifier_alarm_active"] = True
         elif humidity > DRY_HUMIDITY_RESET_PCT:
             state["humidifier_alarm_active"] = False
+            if state.get("humidifier_auto_on"):
+                stopped = await _apply_environment_action(client_id, {
+                    "device": "humidifier",
+                    "action": "off",
+                })
+                if stopped:
+                    state["humidifier_auto_on"] = False
+                    await send_screen_status(
+                        client_id,
+                        "湿度已恢复，加湿器已关闭。",
+                        event="environment_recovered",
+                        duration_ms=5000,
+                    )
 
 
 async def evaluate_sensor_automations(client_id: str, sensor_payload: dict) -> None:
     if not client_id or not isinstance(sensor_payload, dict):
         return
     settings = load_user_settings()
-    _update_sleep_arrival_state(client_id, sensor_payload, settings)
-    await _maybe_prompt_pre_sleep_light(client_id, sensor_payload, settings)
-    if settings.get("quiet_rules", {}).get("allow_sleep_environment_control", True):
-        await _maybe_auto_control_environment(client_id, sensor_payload, settings)
+    await _maybe_adjust_light(client_id, sensor_payload, settings)
+    await _maybe_auto_control_environment(client_id, sensor_payload, settings)
 
 
 def schedule_sensor_automations(client_id: str, sensor_payload: dict) -> None:
@@ -2072,7 +2223,6 @@ def schedule_sensor_automations(client_id: str, sensor_payload: dict) -> None:
 
 async def handle_sleep_greeting_trigger(
     client_id: str,
-    history: list[dict],
     settings: dict,
 ) -> None:
     state = _get_automation_state(client_id)
@@ -2092,21 +2242,12 @@ async def handle_sleep_greeting_trigger(
     try:
         await send_screen_status(client_id, "状态：检测到躺下，正在进行关怀问候。", event="sleep_greeting")
         print(f"[就寝] 开始生成主动问候: {day_key}")
-        reply = await generate_automation_reply(
-            "压力传感器检测到用户刚刚躺下。"
-            "请用一句非常自然、低打扰的躺下关怀问候用户，像真实枕边助手。"
-            "不要提传感器、系统、检测、模式，也不要催促用户回答。",
-            fallback="躺好啦？我在这儿陪着你。",
-        )
-        reply = reply.strip() or "躺好啦？今天辛苦了，我在这儿陪着你。"
+        line_index = sum(ord(ch) for ch in day_key) % len(SLEEP_GREETING_LINES)
+        reply = SLEEP_GREETING_LINES[line_index]
 
         print(f"[就寝] 主动问候回复: {reply}")
         ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
         print(f"[就寝] 主动问候 TTS ok={ok}")
-        if ok:
-            history.append({"role": "user", "content": SLEEP_GREETING_TRIGGER_TEXT})
-            history.append({"role": "assistant", "content": reply})
-            await request_one_shot_listen(client_id, "sleep_greeting_reply")
     except asyncio.CancelledError:
         print(f"[就寝] 主动问候被取消: {day_key}")
         raise
@@ -2253,6 +2394,11 @@ def quick_music_preroll_text(text: str) -> str:
     compact = re.sub(r"\s+", "", raw)
     if not compact:
         return ""
+
+    # A random request is not a song title. Keep the fast H5 preroll aligned
+    # with the semantic music classifier below.
+    if any(marker in compact for marker in ("随便放", "随机来", "随便来", "来点音乐", "放首歌")):
+        return "我随便为你挑一首。"
 
     stop_words = ("停止播放", "暂停播放", "停止音乐", "暂停音乐", "关闭音乐", "关掉音乐", "停歌", "别放了")
     if any(word in compact for word in stop_words):
@@ -2445,7 +2591,7 @@ async def handle_app_chat_once(
     allow_device_tts = not is_ai_voice_blocked(settings)
     allow_device_status = not is_ai_screen_blocked(settings)
 
-    pending_reply = await _consume_pre_sleep_light_reply(
+    pending_reply = await _consume_environment_adjustment_reply(
         target,
         user_text,
         allow_voice=allow_device_tts,
@@ -2458,12 +2604,13 @@ async def handle_app_chat_once(
             "device_tts": allow_device_tts,
             "quiet_status": quiet_status,
         })
-        await send_app_message(websocket, {
-            "type": "app_chat_delta",
-            "request_id": request_id,
-            "delta": pending_reply,
-            "text": pending_reply,
-        })
+        if pending_reply:
+            await send_app_message(websocket, {
+                "type": "app_chat_delta",
+                "request_id": request_id,
+                "delta": pending_reply,
+                "text": pending_reply,
+            })
         await send_app_message(websocket, {
             "type": "app_chat_done",
             "request_id": request_id,
@@ -2557,12 +2704,18 @@ async def handle_app_chat_once(
             if allow_device_tts:
                 await send_tts_stream_to_esp32(target, reply, source="app_chat", turn_id=turn_id)
         else:
-            if music_kind == "artist" and music_artist:
+            if (
+                music_kind == "random"
+                or music_selection == "random"
+                or quick_music_reply == "我随便为你挑一首。"
+            ):
+                reply = "我随便为你挑一首。"
+            elif music_kind == "artist" and music_artist:
                 reply = f"我先找一首{music_artist}能播的歌。"
             elif music_title and music_artist:
                 reply = f"我先找{music_artist}的《{music_title}》。"
             else:
-                reply = f"我先帮你找《{music_query}》。"
+                reply = "我来为你找一首合适的音乐。"
 
             async def _music_task() -> None:
                 preroll_task = quick_music_preroll_task
@@ -2706,16 +2859,35 @@ async def handle_app_chat_once(
             await send_tts_state_to_esp32(target, "stop", source="app_chat", turn_id=turn_id)
 
 
-async def answer_user_text(client_id: str, text: str, history: list[dict], turn_id: int) -> None:
+async def answer_user_text(
+    client_id: str,
+    text: str,
+    history: list[dict],
+    turn_id: int,
+    *,
+    environment_only: bool = False,
+) -> None:
+    settings = load_user_settings()
+    if is_sleep_greeting_trigger(text):
+        await handle_sleep_greeting_trigger(client_id, settings)
+        return
+
+    pending_reply = await _consume_environment_adjustment_reply(
+        client_id,
+        text,
+        allow_voice=not is_ai_voice_blocked(settings),
+        turn_id=turn_id,
+    )
+    if pending_reply is not None:
+        return
+    if environment_only:
+        await send_json_to_esp32(client_id, {"type": "status", "turn_id": turn_id})
+        return
+
     if is_exit_phrase(text):
         await send_tts_stream_to_esp32(
             client_id, EXIT_REPLY_TEXT, turn_id=turn_id, end_dialog=True
         )
-        return
-
-    settings = load_user_settings()
-    if is_sleep_greeting_trigger(text):
-        await handle_sleep_greeting_trigger(client_id, history, settings)
         return
 
     alarm_reply = await handle_alarm_request_if_needed(
@@ -2733,12 +2905,7 @@ async def answer_user_text(client_id: str, text: str, history: list[dict], turn_
     if await answer_music_request_if_needed(client_id, text, turn_id):
         return
 
-    pending_reply = await _consume_pre_sleep_light_reply(
-        client_id,
-        text,
-        allow_voice=not is_ai_voice_blocked(settings),
-    )
-    if pending_reply is not None:
+    if await maybe_prompt_comfort_music(client_id, text, settings, turn_id):
         return
 
     # ★ xiaozhi 流式：chat_stream 自带 Function Calling，所有对话统一走流式
@@ -2848,7 +3015,13 @@ async def process_audio_turn(client_id: str, audio_b64: str, history: list[dict]
     await process_audio_frames_turn(client_id, frames, history, turn_id, "legacy_pcm")
 
 
-async def process_realtime_audio(client_id: str, pcm_queue: asyncio.Queue, history: list[dict], turn_id: int) -> None:
+async def process_realtime_audio(
+    client_id: str,
+    pcm_queue: asyncio.Queue,
+    history: list[dict],
+    turn_id: int,
+    mode: str = "auto",
+) -> None:
     try:
         stt_started_at = time.monotonic()
         print(f"[Audio] realtime STT start turn_id={turn_id}")
@@ -2873,7 +3046,13 @@ async def process_realtime_audio(client_id: str, pcm_queue: asyncio.Queue, histo
             "text": text,
             "turn_id": turn_id
         })
-        await answer_user_text(client_id, text, history, turn_id)
+        await answer_user_text(
+            client_id,
+            text,
+            history,
+            turn_id,
+            environment_only=mode in {"environment_reply", "interaction_reply"},
+        )
     except asyncio.CancelledError:
         print(f"[Task] 实时语音任务已取消: turn_id={turn_id}")
         raise
@@ -3028,10 +3207,19 @@ async def esp32_endpoint(websocket: WebSocket):
                     print(f"[ESP32] hello session_id={session_id}, version={data.get('version')}")
                     continue
 
+                if msg_type in {"environment_reply", "interaction_reply"}:
+                    state = str(data.get("state") or "")
+                    esp32_sessions[client_id]["environment_reply_active"] = state == "start"
+                    if state == "done":
+                        _get_automation_state(client_id)["pending_environment_prompt"] = None
+                    continue
+
                 if msg_type == "listen":
                     state = data.get("state")
                     if state == "start":
                         mode = str(data.get("mode") or "auto")
+                        if esp32_sessions[client_id].get("environment_reply_active"):
+                            mode = "interaction_reply"
                         if mode == "music_barge_in":
                             barge_task = esp32_sessions[client_id].get("barge_task")
                             if barge_task and not barge_task.done():
@@ -3077,7 +3265,7 @@ async def esp32_endpoint(websocket: WebSocket):
                             "opus_bytes": 0,
                         }
                         task = asyncio.create_task(
-                            process_realtime_audio(client_id, pcm_queue, history, turn_id)
+                            process_realtime_audio(client_id, pcm_queue, history, turn_id, mode)
                         )
                         esp32_sessions[client_id]["active_task"] = task
                         print(f"[ESP32] listen start turn_id={turn_id}, mode={data.get('mode')}")
