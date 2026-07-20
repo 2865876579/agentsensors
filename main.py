@@ -1133,6 +1133,12 @@ def _get_automation_state(client_id: str) -> dict:
             "worker_task": None,
         },
     )
+    previous_client_id = state.get("_client_id")
+    if previous_client_id and previous_client_id != client_id:
+        # A one-shot confirmation belongs to one WebSocket session. Never let
+        # a stale environment/comfort prompt intercept a later conversation.
+        state["pending_environment_prompt"] = None
+    state["_client_id"] = client_id
     pending = state.get("pending_environment_prompt")
     if pending and float(pending.get("expires_at") or 0) <= time.time():
         state["pending_environment_prompt"] = None
@@ -1991,14 +1997,24 @@ async def _consume_comfort_reply(
             await send_tts_stream_to_esp32(client_id, reply, source="comfort", turn_id=turn_id)
         return reply
 
-    music_intent = await classify_music_request(user_text)
+    try:
+        music_intent = await asyncio.wait_for(
+            classify_music_request(user_text), timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        return ""
     if _is_comfort_affirmative(user_text):
         music_intent = {
             "action": "play", "query": "华语流行歌曲", "title": "", "artist": "",
             "kind": "random", "selection": "random",
         }
     elif music_intent.get("action") not in {"play", "stop"}:
-        comfort_action = await classify_comfort_reply(user_text)
+        try:
+            comfort_action = await asyncio.wait_for(
+                classify_comfort_reply(user_text), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            return ""
         if comfort_action == "play":
             music_intent = {
                 "action": "play", "query": "华语流行歌曲", "title": "", "artist": "",
@@ -2045,10 +2061,16 @@ async def _consume_environment_adjustment_reply(
             allow_voice=allow_voice,
             turn_id=turn_id,
         )
-    intent = await classify_environment_adjustment_reply(
-        user_text,
-        str(pending.get("proposal") or "环境调整"),
-    )
+    try:
+        intent = await asyncio.wait_for(
+            classify_environment_adjustment_reply(
+                user_text,
+                str(pending.get("proposal") or "环境调整"),
+            ),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        return ""
 
     if intent == "approve":
         ok = await _apply_environment_action(client_id, pending)
