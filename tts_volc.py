@@ -36,6 +36,14 @@ _EMOJI_RE = re.compile(
     re.UNICODE,
 )
 
+_CJK_REPEAT_RE = re.compile(r"([\u4e00-\u9fff])\1{2,}")
+
+
+def _normalize_tts_text(text: str) -> str:
+    """Prevent a malformed streaming reply from speaking one CJK character repeatedly."""
+    text = _EMOJI_RE.sub("", str(text or ""))
+    return _CJK_REPEAT_RE.sub(r"\1\1", text).strip()
+
 
 def _fade_pcm16_mono(pcm: bytes) -> bytes:
     sample_count = len(pcm) // 2
@@ -285,6 +293,7 @@ async def _stream_pcm(
 ) -> AsyncIterator[bytes]:
     payload = json.dumps(_request_body(text, "pcm"), ensure_ascii=False).encode("utf-8")
     pending = bytearray()
+    previous_audio = None
     try:
         async with session.post(
             URL,
@@ -304,6 +313,13 @@ async def _stream_pcm(
                 audio = _audio_bytes_from_response(obj)
                 if not audio:
                     continue
+                # The provider may resend an identical audio chunk during a
+                # transient stream retry. Appending it would make a syllable
+                # repeat audibly; only suppress exact adjacent duplicates.
+                if previous_audio is not None and len(audio) >= 256 and audio == previous_audio:
+                    print(f"[VolcTTS] duplicate PCM chunk suppressed bytes={len(audio)}")
+                    continue
+                previous_audio = audio
                 if not state["saw_audio"] and (
                     audio.startswith(b"ID3") or
                     (len(audio) >= 2 and audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0)
@@ -338,7 +354,7 @@ async def _stream_pcm(
 
 
 async def synthesize(text: str, encoder=None) -> AsyncIterator[bytes]:
-    text = _EMOJI_RE.sub("", text).strip()
+    text = _normalize_tts_text(text)
     if not text:
         return
     if not VOLC_API_KEY:

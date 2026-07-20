@@ -3104,6 +3104,9 @@ const APP_SESSION_ID=(()=>{try{let id=localStorage.getItem('xiaoan_app_session_i
 let appWs=null;
 let appWsTimer=null;
 const appChatReplies=new Map();
+let appChatBusyRequestId='';
+let appChatLastText='';
+let appChatLastSentAt=0;
 let cloudConnected=false;
 let esp32Connected=false;
 let ledEnabled=true;
@@ -3254,6 +3257,17 @@ function scheduleLedBrightness(value){
 function sendAiIntent(text,{mirrorToChat=false}={}){
   const t=(text || '').trim();
   if(!t)return false;
+  if(mirrorToChat){
+    const now=Date.now();
+    if(appChatBusyRequestId){
+      show('上一条消息还在处理中，请稍候。');
+      return false;
+    }
+    if(t===appChatLastText && now-appChatLastSentAt<3000){
+      show('这条消息刚刚已经发送。');
+      return false;
+    }
+  }
   const requestId='app-chat-' + Date.now() + '-' + Math.floor(Math.random()*10000);
   let reply=null;
   if(mirrorToChat){
@@ -3271,6 +3285,11 @@ function sendAiIntent(text,{mirrorToChat=false}={}){
       show('发送失败：云端未连接');
     }
     return false;
+  }
+  if(mirrorToChat){
+    appChatBusyRequestId=requestId;
+    appChatLastText=t;
+    appChatLastSentAt=Date.now();
   }
   if(!mirrorToChat){
     show('已发送给云端 AI：' + t);
@@ -3563,9 +3582,11 @@ function updateAppChat(msg){
   }else if(msg.type==='app_chat_done'){
     bubble.textContent=msg.text || bubble.textContent || '已完成';
     appChatReplies.delete(requestId);
+    if(requestId===appChatBusyRequestId)appChatBusyRequestId='';
   }else if(msg.type==='app_chat_error'){
     bubble.textContent='发送失败：' + (msg.error || '云端未响应');
     appChatReplies.delete(requestId);
+    if(requestId===appChatBusyRequestId)appChatBusyRequestId='';
   }
   scrollChatToBottom(bubble.parentElement);
 }
@@ -3750,6 +3771,13 @@ function connectAppWs(){
   };
   appWs.onclose=()=>{
     setCloudState(false,false);
+    appChatReplies.forEach(bubble=>{
+      if(bubble && (bubble.textContent==='发送中...' || bubble.textContent==='正在思考...')){
+        bubble.textContent='云端连接中断，请重试';
+      }
+    });
+    appChatBusyRequestId='';
+    appChatReplies.clear();
     appWsTimer=setTimeout(connectAppWs,3000);
   };
   appWs.onerror=()=>{

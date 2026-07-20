@@ -217,6 +217,8 @@ async def recognize_queue(audio_queue) -> str:
                 break
 
     def send_frame(ws, frame: bytes, status: int):
+        if stop_event.is_set():
+            return False
         data = {
             "status": status,
             "format": "audio/L16;rate=16000",
@@ -232,7 +234,14 @@ async def recognize_queue(audio_queue) -> str:
                 "accent": "mandarin",
                 "vad_eos": XF_VAD_EOS_MS,
             }
-        ws.send(json.dumps(payload))
+        try:
+            ws.send(json.dumps(payload))
+            return True
+        except Exception as exc:
+            if not stop_event.is_set():
+                error_text.append(str(exc))
+                finish()
+            return False
 
     def on_message(ws, message):
         data = json.loads(message)
@@ -252,21 +261,32 @@ async def recognize_queue(audio_queue) -> str:
     def on_open(ws):
         print("[STT] xfyun realtime open")
         try:
-            first_frame = sync_queue.get(timeout=10)
-            if first_frame is None:
+            first_frame = None
+            while not stop_event.is_set():
+                try:
+                    first_frame = sync_queue.get(timeout=0.5)
+                    break
+                except queue.Empty:
+                    continue
+            if stop_event.is_set() or first_frame is None:
                 finish()
                 return
 
-            send_frame(ws, first_frame, 0)
+            if not send_frame(ws, first_frame, 0):
+                return
             frame_count = 1
             while not stop_event.is_set():
-                frame = sync_queue.get()
+                try:
+                    frame = sync_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
                 if frame is None:
                     send_frame(ws, b"", 2)
                     print(f"[STT] xfyun realtime sent frames={frame_count}")
                     return
                 frame_count += 1
-                send_frame(ws, frame, 1)
+                if not send_frame(ws, frame, 1):
+                    return
         except Exception as exc:
             error_text.append(str(exc))
             finish()

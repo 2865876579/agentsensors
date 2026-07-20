@@ -76,6 +76,8 @@ client = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 # ── 系统提示词 ──────────────────────────────────────────────
 SYSTEM_PROMPT = """你是"小安"，一个放在用户枕边的语音伴侣。用户通过语音和你聊天，不是在读屏幕。
 
+能力边界：云端已经接入智能闹钟。用户要设置、取消、查询闹钟时，先按现有闹钟流程处理；不要声称“没有闹钟功能”。闹钟支持绝对时间、几秒/几分钟/几小时后，以及到点音乐和枕头唤醒联动。
+
 性格：
 - 像一个见多识广但不高冷的朋友——有自己的观点，但不咄咄逼人
 - 好奇心强，会追问、会反问，把对话往下挖而不是停在表面
@@ -674,7 +676,7 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
             "reason": "fast_cancel_alarm",
         }
 
-    if not re.search(r"(闹钟|叫醒|唤醒|喊醒|叫我起床|叫我|提醒|定时)", compact):
+    if not re.search(r"(闹钟|叫醒|唤醒|喊醒|叫我起床|叫我|提醒|定时|计时器|倒计时|设个|设置个|定个)", compact):
         return None
 
     repeat = "once"
@@ -689,7 +691,7 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
 
     relative_seconds = 0
     seconds_match = re.search(
-        r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(?:秒|秒钟)(?:后|之后|以后)",
+        r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(?:秒|秒钟)(?:后|之后|以后|的?(?:闹钟|提醒|计时器))",
         compact,
     )
     if seconds_match:
@@ -701,7 +703,7 @@ def _fast_alarm_intent(user_text: str) -> dict | None:
     if relative_seconds <= 0 and "半小时" in compact:
         relative_minutes = 30
     elif relative_seconds <= 0:
-        match = re.search(r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(分钟|分|小时|钟头)(?:后|之后|以后)", compact)
+        match = re.search(r"([0-9零〇一二两三四五六七八九十百]+)(?:个)?(分钟|分|小时|钟头)(?:后|之后|以后|的?(?:闹钟|提醒|计时器))", compact)
         if match:
             number = _parse_cn_number(match.group(1))
             if number is not None:
@@ -762,8 +764,8 @@ async def classify_alarm_request(user_text: str) -> dict:
 
     raw = re.sub(r"\s+", "", str(user_text or ""))
     alarm_hints = (
-        "闹钟", "叫醒", "叫我", "唤醒我", "提醒我", "定时", "取消提醒",
-        "关闭提醒", "分钟后", "小时后",
+        "闹钟", "叫醒", "叫我", "唤醒我", "提醒我", "定时", "计时器", "倒计时",
+        "设个", "设置个", "定个", "取消提醒", "关闭提醒", "分钟后", "小时后",
     )
     if not any(hint in raw for hint in alarm_hints):
         return {

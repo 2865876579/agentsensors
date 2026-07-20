@@ -164,7 +164,9 @@ last_active_esp32_id: str | None = None
 
 # Mobile H5 clients and latest ESP32 sensor cache.
 app_clients: dict[str, WebSocket] = {}
+app_send_locks: dict[int, asyncio.Lock] = {}
 app_chat_histories: dict[str, list[dict]] = {}
+app_recent_requests: dict[str, float] = {}
 latest_sensor_data: dict | None = None
 latest_snore_event: dict | None = None
 sensor_cache_by_client: dict[str, dict] = {}
@@ -180,6 +182,8 @@ alarm_runtime: dict = {
 }
 SENSOR_POLL_INTERVAL_SEC = 2.0
 device_tts_busy_until: dict[str, float] = {}
+recent_tts_text: dict[str, tuple[str, float]] = {}
+recent_music_stop_at: dict[str, float] = {}
 TTS_PLAYBACK_COOLDOWN_SEC = 4.0
 
 PRE_SLEEP_FSR_PRESSURE_THRESHOLD_N = 0.10
@@ -439,6 +443,8 @@ async def drop_esp32_client(
     esp32_send_locks.pop(client_id, None)
     session = esp32_sessions.pop(client_id, None) or {}
     device_tts_busy_until.pop(client_id, None)
+    recent_tts_text.pop(client_id, None)
+    recent_music_stop_at.pop(client_id, None)
     esp32_tts_frame_counts.pop(client_id, None)
     esp32_tts_playback_events.pop(client_id, None)
     sensor_cache_by_client.pop(client_id, None)
@@ -493,8 +499,14 @@ async def send_json_to_esp32(client_id: str, payload: dict) -> bool:
 
     try:
         async with lock:
-            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+            await asyncio.wait_for(
+                websocket.send_text(json.dumps(payload, ensure_ascii=False)),
+                timeout=8.0,
+            )
         return True
+    except asyncio.TimeoutError:
+        await drop_esp32_client(client_id, "json send timeout", expected_websocket=websocket)
+        return False
     except Exception as exc:
         await drop_esp32_client(
             client_id, f"json send failed: {exc}", expected_websocket=websocket
@@ -509,8 +521,11 @@ async def send_bytes_to_esp32(client_id: str, frame: bytes) -> bool:
         return False
     try:
         async with lock:
-            await websocket.send_bytes(frame)
+            await asyncio.wait_for(websocket.send_bytes(frame), timeout=8.0)
         return True
+    except asyncio.TimeoutError:
+        await drop_esp32_client(client_id, "audio send timeout", expected_websocket=websocket)
+        return False
     except Exception as exc:
         await drop_esp32_client(
             client_id, f"bytes send failed: {exc}", expected_websocket=websocket
@@ -522,7 +537,11 @@ async def _acquire_tts_stream(client_id: str) -> bool:
     lock = esp32_tts_locks.get(client_id)
     if lock is None:
         return False
-    await lock.acquire()
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=5.0)
+    except asyncio.TimeoutError:
+        print(f"[TTS] stream lock timeout client={client_id}")
+        return False
     if esp32_tts_locks.get(client_id) is not lock or client_id not in esp32_clients:
         if lock.locked():
             lock.release()
@@ -556,6 +575,11 @@ async def send_tts_state_to_esp32(
     text: str | None = None,
     stream_owner: asyncio.Task | None = None,
 ) -> bool:
+    if state == "stop" and stream_owner is not None:
+        current_owner = esp32_tts_owners.get(client_id)
+        if current_owner is not stream_owner:
+            print(f"[TTS] stale stop ignored client={client_id}")
+            return False
     owns_stream = False
     if state == "stop" and stream_owner is None:
         owner = esp32_tts_owners.get(client_id) or asyncio.current_task()
@@ -640,11 +664,19 @@ async def send_tts_audio_frames_to_esp32(
 
     frame_count = 0
     started_at = time.monotonic()
+    previous_frame: bytes | None = None
     async for frame in synthesize(text, encoder=encoder):
         if not frame:
             continue
+        # Volc occasionally repeats one encoded frame during a stream retry.
+        # Drop only an adjacent, sufficiently large duplicate; short silence
+        # frames are left untouched so normal pauses keep their duration.
+        if previous_frame is not None and len(frame) >= 40 and frame == previous_frame:
+            print(f"[TTS] duplicate Opus frame suppressed bytes={len(frame)}")
+            continue
         if not await send_bytes_to_esp32(client_id, frame):
             return frame_count
+        previous_frame = frame
         frame_count += 1
         esp32_tts_frame_counts[client_id] = (
             esp32_tts_frame_counts.get(client_id, 0) + 1
@@ -673,6 +705,12 @@ async def send_tts_stream_to_esp32(
     """
     if client_id not in esp32_clients:
         return False
+    normalized_text = re.sub(r"\s+", "", str(text or ""))
+    now = time.monotonic()
+    previous = recent_tts_text.get(client_id)
+    if previous and previous[0] == normalized_text and now - previous[1] < 2.0:
+        print(f"[TTS-send] duplicate suppressed client={client_id} text={text!r}")
+        return True
     # ★ AI 回复不应该被 turn_id 拦截——后台任务可能跨多个录音周期
 
     print(f"[TTS-send] start, text_len={len(text)}")
@@ -680,6 +718,7 @@ async def send_tts_stream_to_esp32(
         client_id, "start", source=source, turn_id=turn_id
     ):
         return False
+    recent_tts_text[client_id] = (normalized_text, time.monotonic())
     stream_owner = asyncio.current_task()
     seq = 0
     try:
@@ -784,6 +823,7 @@ async def send_music_frames_to_esp32(
     play_label = f"《{song.name}》 - {song.artists}" if song.artists else f"《{song.name}》"
     await send_screen_status(client_id, f"状态：正在播放{play_label}。", event="music_play")
     await wait_preroll()
+    stream_owner = asyncio.current_task()
     if not await send_tts_state_to_esp32(client_id, "start", source=source, turn_id=turn_id):
         return False
 
@@ -824,7 +864,13 @@ async def send_music_frames_to_esp32(
         await send_screen_status(client_id, "状态：音乐播放失败。", event="music_error")
         return False
     finally:
-        await send_tts_state_to_esp32(client_id, "stop", source=source, turn_id=turn_id)
+        await asyncio.shield(send_tts_state_to_esp32(
+            client_id,
+            "stop",
+            source=source,
+            turn_id=turn_id,
+            stream_owner=stream_owner,
+        ))
 
     print(f"[Music] done, frames={frame_count}, song={song.label}")
     return frame_count > 0
@@ -837,7 +883,16 @@ async def answer_music_request_if_needed(
     music_intent: dict | None = None,
 ) -> bool:
     """Handle play/stop music commands using an LLM semantic classifier."""
-    music_intent = music_intent or await classify_music_request(text)
+    if music_intent is None:
+        if not _music_request_is_likely(text):
+            return False
+        try:
+            music_intent = await asyncio.wait_for(
+                classify_music_request(text), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            print("[Music] intent classifier timeout")
+            return False
     music_action = music_intent.get("action")
     music_query = (music_intent.get("query") or "").strip()
     music_title = (music_intent.get("title") or "").strip()
@@ -848,9 +903,13 @@ async def answer_music_request_if_needed(
         return False
 
     if music_action == "stop":
+        now = time.monotonic()
+        duplicate_stop = now - recent_music_stop_at.get(client_id, 0.0) < 2.0
+        recent_music_stop_at[client_id] = now
         await send_tts_state_to_esp32(client_id, "stop", source="music", turn_id=turn_id)
         await send_screen_status(client_id, "状态：已停止播放音乐。", event="music_stop")
-        await send_tts_stream_to_esp32(client_id, "音乐已停止。", source="music", turn_id=turn_id)
+        if not duplicate_stop:
+            await send_tts_stream_to_esp32(client_id, "音乐已停止。", source="music", turn_id=turn_id)
         return True
 
     ok = await send_music_frames_to_esp32(
@@ -934,12 +993,12 @@ async def broadcast_to_apps(payload: dict) -> None:
     dead: list[str] = []
     text = json.dumps(payload, ensure_ascii=False)
     for app_id, ws in list(app_clients.items()):
-        try:
-            await ws.send_text(text)
-        except Exception:
+        if not await send_app_message(ws, payload):
             dead.append(app_id)
     for app_id in dead:
-        app_clients.pop(app_id, None)
+        ws = app_clients.pop(app_id, None)
+        if ws is not None:
+            app_send_locks.pop(id(ws), None)
 
 
 def build_settings_update_for_ai_persona(persona: str) -> dict | None:
@@ -1690,10 +1749,42 @@ async def handle_alarm_request_if_needed(
     allow_voice: bool = True,
     source: str = "alarm_setting",
 ) -> str | None:
-    intent = await classify_alarm_request(text)
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    capability_phrases = (
+        "有没有闹钟", "有闹钟功能吗", "能不能设闹钟", "可以设闹钟吗",
+        "支持闹钟吗", "你有闹钟吗",
+    )
+    if any(phrase in normalized for phrase in capability_phrases):
+        reply = "有，我支持云端闹钟。你可以说几点，或说多少秒、多少分钟后叫你。"
+        if allow_voice:
+            await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
+        return reply
+    alarm_gate_phrases = (
+        "闹钟", "提醒", "叫醒", "起床", "定个闹钟", "设置闹钟",
+        "定时", "计时器", "倒计时", "叫醒我", "提醒我", "设个", "设置个", "定个",
+        "叫我", "几点叫我", "多久后叫我", "几分钟后", "几秒后", "分钟后叫我", "秒后叫我",
+    )
+    if not normalized or not any(phrase in normalized for phrase in alarm_gate_phrases):
+        return None
+    try:
+        intent = await asyncio.wait_for(
+            classify_alarm_request(text), timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        print("[Alarm] intent classifier timeout")
+        return None
     action = intent.get("action")
     if action == "none":
-        return None
+        command_markers = (
+            "定个", "设置", "设个", "安排", "叫我", "提醒我", "叫醒我",
+            "几点", "多久后", "几分钟后", "几秒后", "倒计时",
+        )
+        if not any(marker in normalized for marker in command_markers):
+            return None
+        reply = "可以，我支持云端闹钟。告诉我几点，或说多久后叫你。"
+        if allow_voice:
+            await send_tts_stream_to_esp32(client_id, reply, source=source, turn_id=turn_id)
+        return reply
 
     settings = load_user_settings()
     alarms = list(settings.get("alarms") or [])
@@ -1941,8 +2032,22 @@ async def _prepare_comfort_prompt(client_id: str, text: str) -> str | None:
         return None
     if now - float(state.get("last_comfort_prompt_at") or 0.0) < COMFORT_REPLY_COOLDOWN_SEC:
         return None
-    if not await classify_emotional_need(text):
-        return None
+    direct_comfort_phrases = (
+        "我很累", "我好累", "我太累", "今天很累", "今天好累", "有点累",
+        "心情很差", "心情不好", "心情很糟", "压力很大", "好烦", "很孤独",
+        "不想说话", "难受", "崩溃",
+    )
+    normalized_text = re.sub(r"\s+", "", str(text or "")).lower()
+    if not any(phrase in normalized_text for phrase in direct_comfort_phrases):
+        try:
+            emotional = await asyncio.wait_for(
+                classify_emotional_need(text), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            print("[Comfort] emotional classifier timeout")
+            return None
+        if not emotional:
+            return None
 
     proposal = "听起来你今天有点累，要不要我放一段合适的音乐陪你缓一会儿？你也可以直接告诉我想听什么。"
     state["last_comfort_prompt_at"] = now
@@ -1978,6 +2083,23 @@ async def maybe_prompt_comfort_music(
         state["pending_environment_prompt"] = None
         return False
     return True
+
+
+def _music_request_is_likely(text: str) -> bool:
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    music_gate_phrases = (
+        "播放", "放一首", "放首", "播一首", "播首", "来一首", "来首",
+        "放歌", "放音乐", "听歌", "音乐", "歌曲", "停止播放", "暂停播放",
+        "停止音乐", "暂停音乐", "关掉音乐", "停歌", "别放了",
+    )
+    non_music_markers = ("桌面", "文件", "这里", "上面", "下面", "进去")
+    likely_song_phrase = "放" in normalized and not any(
+        marker in normalized for marker in non_music_markers
+    )
+    return bool(normalized) and (
+        any(phrase in normalized for phrase in music_gate_phrases)
+        or likely_song_phrase
+    )
 
 
 async def _consume_comfort_reply(
@@ -2426,8 +2548,10 @@ async def handle_ai_stream_result(client_id: str, user_text: str, history: list[
 
 
 async def send_app_message(websocket: WebSocket, payload: dict) -> bool:
+    lock = app_send_locks.setdefault(id(websocket), asyncio.Lock())
     try:
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        async with lock:
+            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
         return True
     except Exception as exc:
         print(f"[APP] send failed: {exc}")
@@ -2474,7 +2598,22 @@ async def handle_didi_ride_request_by_ai(
     quiet_status: dict | None = None,
 ) -> bool:
     """AI 语义识别打车需求；识别为打车后调用滴滴 MCP 基础版。"""
-    intent = await classify_didi_ride_request(text)
+    # Most chat turns are unrelated to ride requests. Avoid spending a full
+    # classifier round trip on ordinary conversation (which can take 10-20s).
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    ride_gate_phrases = (
+        "打车", "叫车", "滴滴", "网约车", "出租车", "送我到", "带我去",
+        "去机场", "去车站", "去某地",
+    )
+    if not normalized or not any(phrase in normalized for phrase in ride_gate_phrases):
+        return False
+    try:
+        intent = await asyncio.wait_for(
+            classify_didi_ride_request(text), timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        print("[DiDi] intent classifier timeout")
+        return False
     if intent.get("action") != "ride":
         return False
 
@@ -2610,6 +2749,27 @@ async def handle_app_chat_once(
     if not user_text:
         return
 
+    request_key = "|".join(
+        (
+            str(session_id or str(id(websocket))).strip(),
+            re.sub(r"\s+", "", user_text).lower(),
+        )
+    )
+    now = time.monotonic()
+    for key, timestamp in list(app_recent_requests.items()):
+        if now - timestamp > 30.0:
+            app_recent_requests.pop(key, None)
+    previous_request_at = app_recent_requests.get(request_key)
+    if previous_request_at is not None and now - previous_request_at < 15.0:
+        await send_app_message(websocket, {
+            "type": "app_chat_error",
+            "request_id": request_id,
+            "error": "重复请求，上一条消息正在处理",
+        })
+        print(f"[APP-chat] duplicate suppressed session={session_id!r} text={user_text!r}")
+        return
+    app_recent_requests[request_key] = now
+
     settings = load_user_settings()
     quiet_status = get_quiet_status(settings)
 
@@ -2636,20 +2796,25 @@ async def handle_app_chat_once(
 
     allow_device_tts = not is_ai_voice_blocked(settings)
     allow_device_status = not is_ai_screen_blocked(settings)
+    turn_id = next_turn_id(target)
+
+    # Notify the app before consuming a pending confirmation. The confirmation
+    # path may classify and start music before it returns.
+    await send_app_message(websocket, {
+        "type": "app_chat_start",
+        "request_id": request_id,
+        "esp32_connected": True,
+        "device_tts": allow_device_tts,
+        "quiet_status": quiet_status,
+    })
 
     pending_reply = await _consume_environment_adjustment_reply(
         target,
         user_text,
         allow_voice=allow_device_tts,
+        turn_id=turn_id,
     )
     if pending_reply is not None:
-        await send_app_message(websocket, {
-            "type": "app_chat_start",
-            "request_id": request_id,
-            "esp32_connected": True,
-            "device_tts": allow_device_tts,
-            "quiet_status": quiet_status,
-        })
         if pending_reply:
             await send_app_message(websocket, {
                 "type": "app_chat_delta",
@@ -2667,7 +2832,6 @@ async def handle_app_chat_once(
         })
         return
 
-    turn_id = next_turn_id(target)
     await cancel_active_task(target)
     if allow_device_status:
         await send_json_to_esp32(target, {
@@ -2676,14 +2840,6 @@ async def handle_app_chat_once(
             "source": "app_chat",
             "turn_id": turn_id,
         })
-
-    await send_app_message(websocket, {
-        "type": "app_chat_start",
-        "request_id": request_id,
-        "esp32_connected": True,
-        "device_tts": allow_device_tts,
-        "quiet_status": quiet_status,
-    })
 
     alarm_reply = await handle_alarm_request_if_needed(
         target,
@@ -2718,7 +2874,16 @@ async def handle_app_chat_once(
             "text": quick_music_reply,
         })
 
-    music_intent = await classify_music_request(user_text)
+    music_intent = None
+    if _music_request_is_likely(user_text):
+        try:
+            music_intent = await asyncio.wait_for(
+                classify_music_request(user_text), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            print("[APP-chat] music intent classifier timeout")
+    if music_intent is None:
+        music_intent = {"action": "none"}
     music_action = music_intent.get("action")
     music_query = (music_intent.get("query") or "").strip()
     music_title = (music_intent.get("title") or "").strip()
@@ -2987,9 +3152,11 @@ async def cancel_active_task(client_id: str) -> None:
 
     task.cancel()
     try:
-        await task
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
     except asyncio.CancelledError:
         pass
+    except asyncio.TimeoutError:
+        print(f"[Task] cancel timeout, continuing client={client_id}")
     except Exception as exc:
         print(f"[Task] 取消旧任务时发现异常: {exc}")
 
@@ -3826,7 +3993,7 @@ async def app_endpoint(websocket: WebSocket):
     ensure_alarm_scheduler_task()
     print(f"[APP] connected ({app_id})")
 
-    await websocket.send_text(json.dumps({
+    await send_app_message(websocket, {
         "type": "app_hello",
         "esp32_connected": bool(esp32_clients),
         "latest": latest_sensor_data,
@@ -3834,8 +4001,33 @@ async def app_endpoint(websocket: WebSocket):
         "settings": load_user_settings(),
         "quiet_status": get_quiet_status(),
         "alarm_state": dict(alarm_runtime),
-    }, ensure_ascii=False))
+    })
     await request_sensor_data()
+    background_tasks: set[asyncio.Task] = set()
+
+    def track_background_task(coro) -> None:
+        task = asyncio.create_task(coro)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    async def run_app_chat_task(
+        request_id: str, text: str, session_id: str, source: str = "app_chat"
+    ) -> None:
+        try:
+            if source == "pc_agent_task":
+                await handle_pc_agent_task_once(websocket, text, request_id, session_id)
+            else:
+                await handle_app_chat_once(websocket, text, request_id, session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[{source}] fatal error: {exc}")
+            await send_app_message(websocket, {
+                "type": "app_chat_error",
+                "request_id": request_id,
+                "error": str(exc)[:160],
+                **({"source": source} if source == "pc_agent_task" else {}),
+            })
 
     try:
         while True:
@@ -3847,15 +4039,15 @@ async def app_endpoint(websocket: WebSocket):
 
             msg_type = data.get("type")
             if msg_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}, ensure_ascii=False))
+                await send_app_message(websocket, {"type": "pong"})
             elif msg_type == "settings_get":
                 settings = load_user_settings()
-                await websocket.send_text(json.dumps({
+                await send_app_message(websocket, {
                     "type": "settings_state",
                     "settings": settings,
                     "quiet_status": get_quiet_status(settings),
                     "alarm_state": dict(alarm_runtime),
-                }, ensure_ascii=False))
+                })
             elif msg_type == "settings_update":
                 settings = save_user_settings(data.get("settings") or {})
                 quiet_status = get_quiet_status(settings)
@@ -3867,52 +4059,30 @@ async def app_endpoint(websocket: WebSocket):
                     "quiet_status": quiet_status,
                     "alarm_state": dict(alarm_runtime),
                 }
-                await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                await send_app_message(websocket, payload)
                 await broadcast_to_apps(payload)
             elif msg_type == "read_sensors":
                 ok = await request_sensor_data(data.get("client_id"))
-                await websocket.send_text(json.dumps({
+                await send_app_message(websocket, {
                     "type": "read_sensors_ack",
                     "ok": ok,
                     "esp32_connected": bool(esp32_clients),
-                }, ensure_ascii=False))
+                })
             elif msg_type == "pc_agent_task":
                 request_id = str(data.get("request_id") or "")
-                try:
-                    await handle_pc_agent_task_once(
-                        websocket,
-                        str(data.get("text") or ""),
-                        request_id,
-                        str(data.get("session_id") or app_id),
-                    )
-                except Exception as exc:
-                    print(f"[PC-Agent-task] fatal error: {exc}")
-                    import traceback
-                    traceback.print_exc()
-                    await send_app_message(websocket, {
-                        "type": "app_chat_error",
-                        "request_id": request_id,
-                        "error": str(exc)[:160],
-                        "source": "pc_agent_task",
-                    })
+                track_background_task(run_app_chat_task(
+                    request_id,
+                    str(data.get("text") or ""),
+                    str(data.get("session_id") or app_id),
+                    "pc_agent_task",
+                ))
             elif msg_type == "app_chat":
                 request_id = str(data.get("request_id") or "")
-                try:
-                    await handle_app_chat_once(
-                        websocket,
-                        str(data.get("text") or ""),
-                        request_id,
-                        str(data.get("session_id") or app_id),
-                    )
-                except Exception as exc:
-                    print(f"[APP-chat] fatal error: {exc}")
-                    import traceback
-                    traceback.print_exc()
-                    await send_app_message(websocket, {
-                        "type": "app_chat_error",
-                        "request_id": request_id,
-                        "error": str(exc)[:160],
-                    })
+                track_background_task(run_app_chat_task(
+                    request_id,
+                    str(data.get("text") or ""),
+                    str(data.get("session_id") or app_id),
+                ))
             elif msg_type == "pillow_cmd":
                 target = pick_esp32_client(data.get("client_id"))
                 action = str(data.get("action") or "").strip()
@@ -3927,11 +4097,11 @@ async def app_endpoint(websocket: WebSocket):
                         payload["target_kpa"] = max(0.0, min(10.0, target_value))
                 ok = await send_json_to_esp32(target, payload) if target else False
                 manual_alarm_stop = ok and action in {"stop", "halt"} and bool(alarm_runtime.get("active"))
-                await websocket.send_text(json.dumps({
+                await send_app_message(websocket, {
                     "type": "command_ack",
                     "target": "pillow",
                     "ok": ok,
-                }, ensure_ascii=False))
+                })
                 if manual_alarm_stop and target:
                     await cancel_active_task(target)
                     await broadcast_alarm_state(
@@ -3965,7 +4135,7 @@ async def app_endpoint(websocket: WebSocket):
                     "speed_pct": payload.get("speed_pct"),
                     "duration_sec": payload.get("duration_sec"),
                 }
-                await websocket.send_text(json.dumps(ack, ensure_ascii=False))
+                await send_app_message(websocket, ack)
             elif msg_type == "ir_cmd":
                 target = pick_esp32_client(data.get("client_id"))
                 device = _normalize_ir_device(data.get("device"))
@@ -3980,13 +4150,13 @@ async def app_endpoint(websocket: WebSocket):
                         "device": device,
                         "action": action,
                     }) if target else False
-                await websocket.send_text(json.dumps({
+                await send_app_message(websocket, {
                     "type": "command_ack",
                     "target": "ir",
                     "device": device,
                     "action": action,
                     "ok": ok,
-                }, ensure_ascii=False))
+                })
     except WebSocketDisconnect:
         print(f"[APP] disconnected ({app_id})")
     except RuntimeError as exc:
@@ -3994,7 +4164,13 @@ async def app_endpoint(websocket: WebSocket):
             raise
         print(f"[APP] disconnected ({app_id})")
     finally:
+        for task in list(background_tasks):
+            if not task.done():
+                task.cancel()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
         app_clients.pop(app_id, None)
+        app_send_locks.pop(id(websocket), None)
 
 
 @app.websocket("/ws/pc_agent")
