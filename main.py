@@ -81,6 +81,7 @@ from avatar_image2 import (
     current_rgb666_path,
     generate_lcd_avatar,
     get_current_avatar_manifest,
+    restore_default_lcd_avatar,
 )
 from didi_mcp import create_basic_ride_link
 
@@ -138,11 +139,14 @@ SLEEP_GREETING_LINES = (
     "你已经走过很长的一天了，现在把自己交给枕头，剩下的路让梦替你走一程。",
     "晚安不是结束，而是把自己重新充满电的开始，今晚请允许自己什么都不做。",
 )
-EXIT_REPLY_TEXT = "好的，再见小安。"
+EXIT_REPLY_TEXT = "好的，那我先退下了。"
 EXIT_PHRASES = (
-    "再见小安",
-    "小安再见",
-    "拜拜小安",
+    "再见",
+    "拜拜",
+    "晚安",
+    "我要睡觉了",
+    "我去睡觉了",
+    "我要休息了",
     "退出对话",
     "结束对话",
 )
@@ -4004,10 +4008,12 @@ async def esp32_endpoint(websocket: WebSocket):
                     sensor_data = latest_sensor_data.setdefault("data", {})
                     sensor_data["avatar_sync_ok"] = bool(data.get("ok"))
                     sensor_data["avatar_sync_ret"] = data.get("ret")
+                    sensor_data["avatar_default"] = bool(data.get("default"))
                     await broadcast_to_apps({
                         "type": "avatar_state",
                         "esp32_connected": True,
                         "ok": bool(data.get("ok")),
+                        "default": bool(data.get("default")),
                         "ret": data.get("ret"),
                         "data": data,
                         "latest": latest_sensor_data,
@@ -4389,6 +4395,33 @@ async def api_avatar_sync(payload: dict):
     }
 
 
+@app.post("/api/avatar/restore-default")
+async def api_avatar_restore_default(payload: dict):
+    """Restore the firmware avatar and delete cloud-generated avatar assets."""
+    try:
+        manifest = await asyncio.to_thread(restore_default_lcd_avatar)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)[:240])
+
+    target = pick_esp32_client(payload.get("client_id"))
+    esp32_restored = await send_json_to_esp32(target, {
+        "type": "avatar_restore_default",
+    }) if target else False
+    result = {
+        "ok": True,
+        "esp32_connected": bool(target),
+        "esp32_restored": esp32_restored,
+        "manifest": manifest,
+        "note": (
+            "已恢复默认形象并清理生成记录。"
+            if esp32_restored
+            else "云端已恢复默认形象；枕头连接后请再次点击恢复默认。"
+        ),
+    }
+    await broadcast_to_apps({"type": "avatar_restored", **result})
+    return result
+
+
 @app.websocket("/ws/app")
 async def app_endpoint(websocket: WebSocket):
     """Mobile H5 entry: receive live ESP32 sensor telemetry."""
@@ -4413,6 +4446,7 @@ async def app_endpoint(websocket: WebSocket):
     })
     await request_sensor_data()
     background_tasks: set[asyncio.Task] = set()
+    pillow_hold_target = ""
 
     def track_background_task(coro) -> None:
         task = asyncio.create_task(coro)
@@ -4497,19 +4531,27 @@ async def app_endpoint(websocket: WebSocket):
                 action = str(data.get("action") or "").strip().lower()
                 if action in {"stop", "halt"}:
                     action = "halt"
+                continuous = data.get("continuous") is True and action in {"tilt", "recover"}
                 payload = {
                     "type": "pillow_cmd",
                     "action": action,
                     "duration_sec": (
-                        0 if action == "halt"
+                        0 if action == "halt" or continuous
                         else max(1, min(2, int(data.get("duration_sec") or 2)))
                     ),
                 }
+                if continuous:
+                    payload["continuous"] = True
                 if action in {"tilt", "recover"} and data.get("target_kpa") is not None:
                     target_value = float(data.get("target_kpa"))
                     if math.isfinite(target_value):
                         payload["target_kpa"] = max(0.0, min(10.0, target_value))
                 ok = await send_json_to_esp32(target, payload) if target else False
+                if ok:
+                    if continuous and action == "recover":
+                        pillow_hold_target = target
+                    else:
+                        pillow_hold_target = ""
                 manual_alarm_stop = ok and action == "halt" and bool(alarm_runtime.get("active"))
                 await send_app_message(websocket, {
                     "type": "command_ack",
@@ -4578,6 +4620,12 @@ async def app_endpoint(websocket: WebSocket):
             raise
         print(f"[APP] disconnected ({app_id})")
     finally:
+        if pillow_hold_target:
+            await send_json_to_esp32(pillow_hold_target, {
+                "type": "pillow_cmd",
+                "action": "halt",
+                "duration_sec": 0,
+            })
         for task in list(background_tasks):
             if not task.done():
                 task.cancel()

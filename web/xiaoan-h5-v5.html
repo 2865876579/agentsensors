@@ -2411,6 +2411,7 @@ body{
 .avatar-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .avatar-actions button{height:38px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.052);color:var(--text);font-weight:800}
 .avatar-actions button.primary{background:linear-gradient(135deg,var(--cyan),var(--green));color:#092126;border:0}
+.avatar-actions button.restore-default{grid-column:1/-1}
 .avatar-status{min-height:16px;font-size:10px;color:var(--muted);line-height:1.35}
 @media (max-width:380px){.avatar-lab-body{grid-template-columns:104px 1fr;gap:10px}.avatar-preview{height:150px}.avatar-actions button{font-size:11px}}
 
@@ -2884,7 +2885,7 @@ body{
         <button class="primary" data-cmd="一键保存当前枕头气压"><i data-lucide="bookmark-check"></i>一键保存</button>
         <button data-cmd="把枕头升高一点"><i data-lucide="arrow-up"></i>升高</button>
         <button data-cmd="把枕头降低一点"><i data-lucide="arrow-down"></i>降低</button>
-        <button class="warn" data-cmd="远程急停"><i data-lucide="octagon-alert"></i>急停</button>
+        <button class="warn" data-pillow-release-hold><i data-lucide="octagon-alert"></i>急停</button>
       </div>
 
       <div class="home-device-grid">
@@ -3089,6 +3090,7 @@ body{
             <div class="avatar-actions">
               <button class="primary" id="avatarGenerateBtn">生成形象</button>
               <button id="avatarSyncBtn">同步 LCD</button>
+              <button class="restore-default" id="avatarRestoreBtn">恢复默认</button>
             </div>
             <div class="avatar-status" id="avatarStatus">生成后会自动转成枕头屏幕可显示的格式。</div>
           </div>
@@ -3273,6 +3275,9 @@ function currentTargetPressure(){
 function sendPillowCommand(action,options={}){
   const payload={type:'pillow_cmd',action,duration_sec:Number(options.duration_sec ?? 2)};
   const actionNames={tilt:'升高',recover:'降低',halt:'停止',stop:'急停'};
+  if(options.continuous===true){
+    payload.continuous=true;
+  }
   if(options.target_kpa!==undefined){
     payload.target_kpa=Number(options.target_kpa);
   }
@@ -3875,9 +3880,25 @@ async function syncAvatarToLcd(){
   }catch(e){setAvatarStatus('同步失败：' + (e.message||e));show('LCD 同步失败');}
   finally{if(btn)btn.disabled=false;}
 }
+async function restoreDefaultAvatar(){
+  if(!window.confirm('恢复最初人物形象，并删除所有新生成的形象？'))return;
+  const btn=document.getElementById('avatarRestoreBtn');
+  if(btn)btn.disabled=true;
+  setAvatarStatus('正在恢复默认形象并清理生成记录...');
+  try{
+    const res=await fetch(avatarApi('/api/avatar/restore-default'),{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok)throw new Error(data.detail||data.error||'恢复失败');
+    updateAvatarPreview(data.manifest);
+    setAvatarStatus(data.note||'已恢复默认形象。');
+    show('默认形象已恢复');
+  }catch(e){setAvatarStatus('恢复失败：' + (e.message||e));show('恢复默认失败');}
+  finally{if(btn)btn.disabled=false;}
+}
 function bindAvatarWorkshop(){
   document.getElementById('avatarGenerateBtn')?.addEventListener('click',generateAvatarFromPrompt);
   document.getElementById('avatarSyncBtn')?.addEventListener('click',syncAvatarToLcd);
+  document.getElementById('avatarRestoreBtn')?.addEventListener('click',restoreDefaultAvatar);
   loadCurrentAvatar();
 }
 
@@ -3929,9 +3950,13 @@ function connectAppWs(){
     }else if(msg.type==='avatar_generated'){
       if(msg.manifest)updateAvatarPreview(msg.manifest);
       setAvatarStatus('新的 AI 形象已生成，可同步 LCD。');
+    }else if(msg.type==='avatar_restored'){
+      if(msg.manifest)updateAvatarPreview(msg.manifest);
+      setAvatarStatus(msg.note||'已恢复默认形象。');
     }else if(msg.type==='avatar_state'){
-      setAvatarStatus(msg.ok ? '枕头 LCD 已切换新形象。' : '枕头 LCD 同步失败。');
-      show(msg.ok ? 'LCD 形象已切换' : 'LCD 形象同步失败');
+      const restored=msg.default===true||msg.data?.default===true;
+      setAvatarStatus(msg.ok ? (restored?'枕头 LCD 已恢复默认形象。':'枕头 LCD 已切换新形象。') : (restored?'默认形象恢复失败。':'枕头 LCD 同步失败。'));
+      show(msg.ok ? (restored?'默认形象已恢复':'LCD 形象已切换') : (restored?'恢复默认失败':'LCD 形象同步失败'));
     }else if(msg.type==='settings_state'){
       applySettings(msg.settings,msg.quiet_status);
       if(msg.alarm_state)updateAlarmBadge(msg.alarm_state);
@@ -4418,8 +4443,6 @@ function updateTelemetry(payload){
   if(typeof data.fan_on==='boolean')setIrDeviceUi('fan',data.fan_on); if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
   buildHomeSummary(data); updateStatusRows(data);
 }
-function installPillowHoldControls(){return;}
-
 function activatePage(id){
   const appEl=document.querySelector('.app');
   appEl?.classList.toggle('home-active',id==='home');
@@ -4460,7 +4483,31 @@ if(ledBrightnessInput){
     sendLedCommand('set',event.target.value);
   });
 }
-function installPillowHoldControls(){return;}
+function installPillowHoldControls(){
+  const button=document.querySelector('[data-pillow-release-hold]');
+  if(!button)return;
+  let active=false;
+  const stop=()=>{
+    if(!active)return;
+    active=false;
+    sendPillowCommand('halt',{duration_sec:0});
+  };
+  button.addEventListener('pointerdown',event=>{
+    if(event.isPrimary===false || (event.button!==undefined && event.button!==0))return;
+    event.preventDefault();
+    if(active)return;
+    active=sendPillowCommand('recover',{duration_sec:0,continuous:true});
+    if(active && button.setPointerCapture){
+      button.setPointerCapture(event.pointerId);
+    }
+  });
+  button.addEventListener('pointerup',stop);
+  button.addEventListener('pointercancel',stop);
+  button.addEventListener('lostpointercapture',stop);
+  button.addEventListener('contextmenu',event=>event.preventDefault());
+  window.addEventListener('blur',stop);
+  window.addEventListener('pagehide',stop);
+}
 document.getElementById('homeSend').addEventListener('click',()=>{
   const input=document.getElementById('homeInput');
   sendCommand(input.value);

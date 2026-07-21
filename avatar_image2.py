@@ -25,6 +25,7 @@ from PIL import Image, ImageOps
 
 from config import (
     AVATAR_PUBLIC_BASE_URL,
+    IMAGE2_API_MODE,
     IMAGE2_API_KEY,
     IMAGE2_BASE_URL,
     IMAGE2_MODEL,
@@ -40,6 +41,7 @@ AVATAR_HEIGHT = 480
 AVATAR_ROOT = Path(__file__).resolve().parent / "avatars"
 AVATAR_CURRENT_DIR = AVATAR_ROOT / "current"
 AVATAR_ARCHIVE_DIR = AVATAR_ROOT / "archive"
+AVATAR_DEFAULT_DIR = AVATAR_ROOT / "default"
 
 
 DEFAULT_AVATAR_PROMPT = (
@@ -82,7 +84,6 @@ def _responses_endpoint() -> str:
 
 
 def _images_endpoint() -> str:
-    # Legacy Images API fallback. Your Image Studio profile mainly uses Responses API.
     base = (IMAGE2_BASE_URL or "").rstrip("/") or "https://www.fhl.mom"
     if base.endswith("/v1"):
         return f"{base}/images/generations"
@@ -240,8 +241,8 @@ async def _call_image2_responses(prompt: str, image_model: str) -> bytes:
     raise RuntimeError("Responses API returned no image b64; check whether the relay allows image_generation.")
 
 
-async def _call_image2_images_legacy(prompt: str, size: str = "1024x1536") -> bytes:
-    """Legacy Images API fallback. Your screenshot is not this mode."""
+async def _call_image2_images(prompt: str, size: str = "1024x1536") -> bytes:
+    """Call an OpenAI-compatible Images API generation endpoint."""
     endpoint = _images_endpoint()
     headers = {
         "Authorization": f"Bearer {IMAGE2_API_KEY}",
@@ -283,6 +284,20 @@ async def _call_image2_images_legacy(prompt: str, size: str = "1024x1536") -> by
 async def _call_image2(prompt: str) -> bytes:
     if not IMAGE2_API_KEY:
         raise RuntimeError("IMAGE2_API_KEY is not configured")
+
+    if IMAGE2_API_MODE == "images":
+        errors: list[str] = []
+        for attempt in range(1, 3):
+            try:
+                return await _call_image2_images(prompt)
+            except Exception as exc:
+                errors.append(f"Images/attempt{attempt}: {exc}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+        raise RuntimeError("image2 Images API failed; " + " | ".join(errors))
+
+    if IMAGE2_API_MODE != "responses":
+        raise RuntimeError(f"unsupported IMAGE2_API_MODE: {IMAGE2_API_MODE}")
 
     configured_model = IMAGE2_MODEL or "gpt-image-2-codex"
     candidates: list[str] = []
@@ -335,7 +350,7 @@ async def _call_image2(prompt: str) -> bytes:
 
     # Keep the old endpoint as a last fallback, but your current relay profile probably will not use it.
     try:
-        return await _call_image2_images_legacy(prompt)
+        return await _call_image2_images(prompt)
     except Exception as exc:
         errors.append(f"Images legacy: {exc}")
 
@@ -423,6 +438,58 @@ def get_current_avatar_manifest() -> dict:
         return json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return {"ok": False, "error": f"Failed to read manifest: {exc}"}
+
+
+def restore_default_lcd_avatar() -> dict:
+    """Restore the preserved built-in avatar preview and remove generated assets."""
+    required = (
+        AVATAR_DEFAULT_DIR / "preview.png",
+        AVATAR_DEFAULT_DIR / "avatar_base_rgb666.bin",
+        AVATAR_DEFAULT_DIR / "manifest.json",
+    )
+    if not all(path.exists() for path in required):
+        raise RuntimeError("default LCD avatar resources are incomplete")
+
+    AVATAR_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp_current = AVATAR_ROOT / f".current_restore_{time.time_ns()}"
+    old_current = AVATAR_ROOT / f".current_old_{time.time_ns()}"
+    shutil.copytree(AVATAR_DEFAULT_DIR, tmp_current)
+
+    manifest_path = tmp_current / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["ok"] = True
+    manifest["id"] = "default"
+    manifest["default"] = True
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    try:
+        if AVATAR_CURRENT_DIR.exists():
+            AVATAR_CURRENT_DIR.rename(old_current)
+        tmp_current.rename(AVATAR_CURRENT_DIR)
+    except Exception:
+        if not AVATAR_CURRENT_DIR.exists() and old_current.exists():
+            old_current.rename(AVATAR_CURRENT_DIR)
+        raise
+    finally:
+        if tmp_current.exists():
+            shutil.rmtree(tmp_current)
+        if old_current.exists():
+            shutil.rmtree(old_current)
+
+    deleted_generations = 0
+    if AVATAR_ARCHIVE_DIR.exists():
+        for path in AVATAR_ARCHIVE_DIR.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            deleted_generations += 1
+
+    manifest["deleted_generations"] = deleted_generations
+    return manifest
 
 
 async def generate_lcd_avatar(prompt: str | None = None) -> dict:
