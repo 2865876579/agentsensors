@@ -84,6 +84,12 @@ from avatar_image2 import (
 )
 from didi_mcp import create_basic_ride_link
 
+try:
+    from pypinyin import Style, lazy_pinyin
+except ImportError:  # Keep the service usable until dependencies are installed.
+    Style = None
+    lazy_pinyin = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -272,8 +278,17 @@ async def _pillow_cb(action: str, duration_sec: int, client_id: str, turn_id: in
     target = pick_esp32_client(client_id)
     if not target:
         return "ESP32 未连接"
-    payload = {"type": "pillow_cmd", "action": action, "duration_sec": duration_sec}
-    if target_kpa is not None:
+    action = str(action or "").strip().lower()
+    if action in {"stop", "halt"}:
+        action = "halt"
+        duration_sec = 0
+        target_kpa = None
+    payload = {
+        "type": "pillow_cmd",
+        "action": action,
+        "duration_sec": max(0, min(2, int(duration_sec or 0))),
+    }
+    if target_kpa is not None and action in {"tilt", "recover"}:
         target_value = float(target_kpa)
         if not math.isfinite(target_value):
             return "目标压力无效"
@@ -2533,21 +2548,26 @@ async def handle_sleep_greeting_trigger(
 ) -> None:
     state = _get_automation_state(client_id)
     quiet_status = get_quiet_status(settings)
-    day_key = str(quiet_status.get("now") or "")[:10]
+
+    period = quiet_status.get("period") or {}
+    if quiet_status.get("active") and period.get("name") in {"night_sleep", "nap"}:
+        print(f"[Sleep] greeting muted during {period.get('name')}")
+        await send_json_to_esp32(client_id, {"type": "status"})
+        return
 
     now = time.time()
     if (
         state.get("sleep_greeting_in_progress")
         and float(state.get("sleep_greeting_in_progress_until") or 0) > now
     ):
-        print(f"[就寝] 主动问候正在生成/播放，跳过重复触发: {day_key}")
+        print("[就寝] 主动问候正在生成/播放，跳过重复触发")
         return
 
     state["sleep_greeting_in_progress"] = True
     state["sleep_greeting_in_progress_until"] = now + 45.0
     try:
         await send_screen_status(client_id, "状态：检测到躺下，正在进行关怀问候。", event="sleep_greeting")
-        print(f"[就寝] 开始生成主动问候: {day_key}")
+        print("[就寝] 开始生成主动问候")
         recent = list(state.get("recent_sleep_greetings") or [])[-5:]
         reply = await generate_sleep_greeting(recent)
         if not reply:
@@ -2559,7 +2579,7 @@ async def handle_sleep_greeting_trigger(
         ok = await send_tts_stream_to_esp32(client_id, reply, source="sleep_greeting")
         print(f"[就寝] 主动问候 TTS ok={ok}")
     except asyncio.CancelledError:
-        print(f"[就寝] 主动问候被取消: {day_key}")
+        print("[就寝] 主动问候被取消")
         raise
     finally:
         state["sleep_greeting_in_progress"] = False
@@ -3344,6 +3364,41 @@ def split_pcm_frames(audio_bytes: bytes) -> list[bytes]:
     ]
 
 
+def normalize_stt_entities(text: str) -> str:
+    """Correct homophone-only proper nouns using the user's canonical vocabulary."""
+    source = str(text or "")
+    if not source or lazy_pinyin is None or Style is None:
+        return source
+
+    vocabulary = load_user_settings().get("speech_vocabulary") or []
+    replacements: list[tuple[int, int, str]] = []
+    occupied: set[int] = set()
+    for canonical in sorted(vocabulary, key=len, reverse=True):
+        canonical = str(canonical).strip()
+        size = len(canonical)
+        if size < 2 or not all("\u4e00" <= char <= "\u9fff" for char in canonical):
+            continue
+        canonical_key = tuple(lazy_pinyin(canonical, style=Style.NORMAL))
+        for start in range(0, len(source) - size + 1):
+            if any(index in occupied for index in range(start, start + size)):
+                continue
+            candidate = source[start:start + size]
+            if candidate == canonical or not all(
+                "\u4e00" <= char <= "\u9fff" for char in candidate
+            ):
+                continue
+            if tuple(lazy_pinyin(candidate, style=Style.NORMAL)) == canonical_key:
+                replacements.append((start, start + size, canonical))
+                occupied.update(range(start, start + size))
+
+    normalized = source
+    for start, end, canonical in sorted(replacements, reverse=True):
+        normalized = normalized[:start] + canonical + normalized[end:]
+    if normalized != source:
+        print(f"[STT] entity normalized raw={source!r} normalized={normalized!r}")
+    return normalized
+
+
 async def process_audio_frames_turn(client_id: str, frames: list[bytes], history: list[dict], turn_id: int, source: str) -> None:
     try:
         total_bytes = sum(len(frame) for frame in frames)
@@ -3356,7 +3411,7 @@ async def process_audio_frames_turn(client_id: str, frames: list[bytes], history
             })
             return
 
-        text = await recognize(frames)
+        text = normalize_stt_entities(await recognize(frames))
         if not is_current_turn(client_id, turn_id):
             return
         print(f"[STT] result_len={len(text.strip())}, text={text!r}")
@@ -3407,7 +3462,7 @@ async def process_realtime_audio(
     try:
         stt_started_at = time.monotonic()
         print(f"[Audio] realtime STT start turn_id={turn_id}")
-        text = await recognize_queue(pcm_queue)
+        text = normalize_stt_entities(await recognize_queue(pcm_queue))
         print(
             f"[STT] realtime done turn_id={turn_id} "
             f"latency={time.monotonic() - stt_started_at:.3f}s"
@@ -3460,7 +3515,7 @@ async def process_music_barge_audio(
     current = asyncio.current_task()
     try:
         started = time.monotonic()
-        text = await recognize_queue(pcm_queue)
+        text = normalize_stt_entities(await recognize_queue(pcm_queue))
         print(
             f"[MusicBarge] STT latency={time.monotonic() - started:.3f}s "
             f"turn_id={turn_id} text={text!r}"
@@ -3914,6 +3969,8 @@ async def esp32_endpoint(websocket: WebSocket):
                             "action": data.get("action"),
                             "target_kpa": data.get("target_kpa"),
                             "result_kpa": data.get("result_kpa"),
+                            "reached": bool(data.get("reached")),
+                            "stalled": bool(data.get("stalled")),
                         }
                     await broadcast_to_apps({
                         "type": "pump_result",
@@ -4437,18 +4494,23 @@ async def app_endpoint(websocket: WebSocket):
                 ))
             elif msg_type == "pillow_cmd":
                 target = pick_esp32_client(data.get("client_id"))
-                action = str(data.get("action") or "").strip()
+                action = str(data.get("action") or "").strip().lower()
+                if action in {"stop", "halt"}:
+                    action = "halt"
                 payload = {
                     "type": "pillow_cmd",
                     "action": action,
-                    "duration_sec": int(data.get("duration_sec") or 3),
+                    "duration_sec": (
+                        0 if action == "halt"
+                        else max(1, min(2, int(data.get("duration_sec") or 2)))
+                    ),
                 }
-                if data.get("target_kpa") is not None:
+                if action in {"tilt", "recover"} and data.get("target_kpa") is not None:
                     target_value = float(data.get("target_kpa"))
                     if math.isfinite(target_value):
                         payload["target_kpa"] = max(0.0, min(10.0, target_value))
                 ok = await send_json_to_esp32(target, payload) if target else False
-                manual_alarm_stop = ok and action in {"stop", "halt"} and bool(alarm_runtime.get("active"))
+                manual_alarm_stop = ok and action == "halt" and bool(alarm_runtime.get("active"))
                 await send_app_message(websocket, {
                     "type": "command_ack",
                     "target": "pillow",

@@ -61,6 +61,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "saved_at": "",
         "snore_adjust_enabled": True,
     },
+    "speech_vocabulary": [],
     "alarms": [
         {
             "id": "wake_alarm",
@@ -239,6 +240,15 @@ def normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
             bool(calibration_defaults["snore_adjust_enabled"]),
         ),
     }
+
+    vocabulary = settings.get("speech_vocabulary") or []
+    if isinstance(vocabulary, str):
+        vocabulary = vocabulary.replace("，", ",").replace("、", ",").split(",")
+    settings["speech_vocabulary"] = list(dict.fromkeys(
+        str(item).strip()[:24]
+        for item in vocabulary
+        if 1 < len(str(item).strip()) <= 24
+    ))[:50]
 
     memory = settings.get("memory") or []
     if isinstance(memory, str):

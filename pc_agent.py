@@ -411,6 +411,95 @@ def _image_change_ratio(before, after, threshold: int = 18) -> float:
     return changed / max(1, before.width * before.height)
 
 
+def _normalize_ui_text(value: str) -> str:
+    return "".join(str(value or "").split()).casefold()
+
+
+def _click_visible_text(target: str, app: str = "") -> str:
+    import win32gui
+    from pywinauto import Desktop
+
+    target = str(target or "").strip()
+    if not target:
+        raise ValueError("缺少要点击的界面文字")
+
+    app_key = str(app or "").strip().casefold()
+    if app_key in {"浏览器", "browser", "edge", "chrome"}:
+        ok, detail = _focus_window(
+            {"msedge.exe", "chrome.exe", "firefox.exe", "360chrome.exe"},
+            timeout=8,
+        )
+    elif app_key:
+        ok, detail = _launch_and_focus(app)
+    else:
+        ok, detail = True, win32gui.GetWindowText(win32gui.GetForegroundWindow())
+    if not ok:
+        raise RuntimeError(f"目标应用未能置顶: {detail}")
+
+    hwnd = win32gui.GetForegroundWindow()
+    if not hwnd:
+        raise RuntimeError("当前没有可操作的前台窗口")
+    before = _capture_window(hwnd)
+    wanted = _normalize_ui_text(target)
+    root = Desktop(backend="uia").window(handle=hwnd)
+    ranked = []
+    control_priority = {
+        "Button": 5,
+        "Hyperlink": 5,
+        "ListItem": 4,
+        "TreeItem": 4,
+        "TabItem": 4,
+        "MenuItem": 4,
+        "Text": 2,
+    }
+    for element in root.descendants():
+        try:
+            label = str(element.window_text() or "").strip()
+            normalized = _normalize_ui_text(label)
+            if not normalized or not element.is_visible() or not element.is_enabled():
+                continue
+            rect = element.rectangle()
+            if rect.width() <= 1 or rect.height() <= 1:
+                continue
+            if normalized == wanted:
+                match_score = 3
+            elif wanted in normalized:
+                match_score = 2
+            elif len(normalized) >= 2 and normalized in wanted:
+                match_score = 1
+            else:
+                continue
+            control_type = str(element.element_info.control_type or "")
+            ranked.append((
+                match_score,
+                control_priority.get(control_type, 1),
+                -abs(len(normalized) - len(wanted)),
+                element,
+                label,
+                control_type,
+            ))
+        except Exception:
+            continue
+
+    if not ranked:
+        raise RuntimeError(f"当前窗口中没有找到可点击文字：{target}")
+    ranked.sort(key=lambda item: item[:3], reverse=True)
+    _, _, _, element, label, control_type = ranked[0]
+    element.click_input()
+    time.sleep(0.6)
+
+    changed = 0.0
+    if win32gui.IsWindow(hwnd):
+        try:
+            changed = _image_change_ratio(before, _capture_window(hwnd))
+        except Exception:
+            pass
+    return (
+        f"已点击“{label}”（{control_type or 'UI'}），"
+        f"窗口画面变化 {changed * 100:.1f}%"
+    )
+
+
 def _ensure_wechat_main_window(hwnd, timeout: float = 12.0):
     import win32gui
     from pywinauto import mouse
@@ -642,6 +731,14 @@ async def handle_command(command: dict) -> str:
             return f"已启动并置于前台：{app}（{detail}）"
         except Exception as e:
             return f"启动失败: {e}"
+
+    elif action == "click_text":
+        target = str(params.get("target") or "")
+        app = str(params.get("app") or "")
+        try:
+            return await asyncio.to_thread(_click_visible_text, target, app)
+        except Exception as e:
+            return f"界面点击失败: {e}"
 
     elif action == "create_office_file":
         try:

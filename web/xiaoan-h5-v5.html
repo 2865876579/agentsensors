@@ -2862,20 +2862,20 @@ body{
         <div class="control-main">
           <div class="dial">
             <div class="dial-value">
-              <strong data-pressure>3.2</strong>
+              <strong data-current-pressure>--</strong>
               <span>kPa</span>
             </div>
           </div>
           <div class="control-copy">
             <div class="label">枕头校准</div>
             <h2>当前气压与保存点</h2>
-            <small class="calibration-hint">鼾声干预时的自动充气参考</small>
-            <p data-control-detail>一键保存会把当前真实气压写入云端设置和长期记忆。</p>
+            <small class="calibration-hint">鼾声目标 <b data-saved-kpa>-- kPa</b></small>
+            <p data-control-detail>当前值实时更新；一键保存后用于鼾声自动充气。</p>
           </div>
         </div>
         <div class="range-row">
           <button class="round-btn" data-adjust="-0.2" aria-label="降低"><i data-lucide="minus"></i></button>
-          <input id="pressure" type="range" min="0" max="10" step="0.1" value="3.2">
+          <input id="pressure" type="range" min="0" max="10" step="0.1" value="0" disabled aria-label="当前真实气压">
           <button class="round-btn" data-adjust="0.2" aria-label="升高"><i data-lucide="plus"></i></button>
         </div>
       </div>
@@ -3182,7 +3182,7 @@ const tabs=[...document.querySelectorAll('.tab')];
 const pages=[...document.querySelectorAll('.page')];
 const toast=document.getElementById('toast');
 const pressureInputs=[document.getElementById('pressure'),document.getElementById('pressure2')].filter(Boolean);
-const pressureTexts=[...document.querySelectorAll('[data-pressure]')];
+const currentPressureTexts=[...document.querySelectorAll('[data-current-pressure]')];
 const APP_WS_URL='ws://39.106.190.124:8000/ws/app';
 const APP_API_BASE='http://39.106.190.124:8000';
 try{localStorage.setItem('xiaoan_app_ws',APP_WS_URL);}catch(e){}
@@ -3234,6 +3234,7 @@ function defaultSettings(){
       saved_at:'',
       snore_adjust_enabled:true
     },
+    speech_vocabulary:[],
     alarms:[{
       id:'wake_alarm',
       enabled:false,
@@ -3266,7 +3267,8 @@ function show(text){
   show.timer=setTimeout(()=>toast.classList.remove('show'),1700);
 }
 function currentTargetPressure(){
-  return Number(pressureInputs[0]?.value || 3.2);
+  const saved=Number(userSettings?.pillow_calibration?.saved_kpa);
+  return Number.isFinite(saved) ? saved : 3.2;
 }
 function sendPillowCommand(action,options={}){
   const payload={type:'pillow_cmd',action,duration_sec:Number(options.duration_sec ?? 2)};
@@ -3402,12 +3404,11 @@ function sendCommand(text){
   const kpaMatch=t.match(/([0-9]+(?:\.[0-9]+)?)\s*kPa/i);
   if(kpaMatch || t.includes('目标压力') || t.includes('目标支撑') || t.includes('执行目标')){
     const target=kpaMatch ? Number(kpaMatch[1]) : currentTargetPressure();
-    setPressure(target);
     sendPillowCommand('tilt',{target_kpa:target,duration_sec:0});
     return;
   }
   if(t.includes('急停') || t.includes('停止')){
-    sendPillowCommand('stop',{duration_sec:0});
+    sendPillowCommand('halt',{duration_sec:0});
     return;
   }
   if(t.includes('泄压') || t.includes('降低')){
@@ -3423,7 +3424,13 @@ function sendCommand(text){
 function setPressure(value){
   const v=Math.max(0,Math.min(10,Number(value))).toFixed(1);
   pressureInputs.forEach(input=>{input.value=v;updatePressureSliderFill(input);});
-  pressureTexts.forEach(el=>el.textContent=v);
+}
+function setCurrentPressure(value){
+  const valid=value!==null && value!==undefined && value!=='' && Number.isFinite(Number(value));
+  const n=Number(value);
+  const text=valid ? n.toFixed(1) : '--';
+  setPressure(valid ? n : 0);
+  currentPressureTexts.forEach(el=>el.textContent=text);
 }
 function updatePressureSliderFill(input){
   if(!input)return;
@@ -3564,7 +3571,7 @@ function collectSettings(){
       }
     ],
     quiet_rules:{
-      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
+      block_ai_voice:!!document.getElementById('nightEnabled')?.checked || !!document.getElementById('napEnabled')?.checked,
       block_ai_light:false,
       block_ai_screen:false,
       block_ai_pc_agent:false,
@@ -3614,7 +3621,7 @@ function updateTelemetry(payload){
   const data=latest.data || payload.data || {};
   if(typeof data.pressure_kpa==='number' && data.pressure_valid!==false){
     const v=Number(data.pressure_kpa).toFixed(1);
-    setPressure(v);
+    setCurrentPressure(data.pressure_kpa);
     setText('[data-live-pressure]',v);
   }
   if(typeof data.temperature_c==='number'){
@@ -3952,8 +3959,15 @@ function connectAppWs(){
       if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
     }else if(msg.type==='pump_result'){
       const data=msg.data || {};
-      if(typeof data.result_kpa==='number'){
-        setPressure(data.result_kpa);
+      if(typeof data.result_kpa==='number' && data.result_kpa>=0){
+        latestMeasuredPressure=Number(data.result_kpa);
+        setCurrentPressure(latestMeasuredPressure);
+      }
+      if(data.stalled){
+        show('气压没有上升，已自动停泵，请检查气路和传感器');
+      }else if(data.reached===false){
+        show('未达到目标气压，设备已停止');
+      }else if(typeof data.result_kpa==='number'){
         show('枕头已调整到 ' + Number(data.result_kpa).toFixed(1) + ' kPa');
       }
     }
@@ -4189,7 +4203,7 @@ function collectSettings(){
       {name:'nap',label:'午休',enabled:!!document.getElementById('napEnabled')?.checked,start:document.getElementById('napStart')?.value || '13:00',end:document.getElementById('napEnd')?.value || '14:30'}
     ],
     quiet_rules:{
-      block_ai_voice:!!document.getElementById('nightEnabled')?.checked,
+      block_ai_voice:!!document.getElementById('nightEnabled')?.checked || !!document.getElementById('napEnabled')?.checked,
       block_ai_light:false,
       block_ai_screen:false,
       block_ai_pc_agent:false,
@@ -4202,6 +4216,9 @@ function collectSettings(){
       saved_at:String(currentCal.saved_at || ''),
       snore_adjust_enabled:currentCal.snore_adjust_enabled !== false
     },
+    speech_vocabulary:Array.isArray(userSettings.speech_vocabulary)
+      ? userSettings.speech_vocabulary.slice(0,50)
+      : [],
     alarms:[{
       id:currentAlarm.id || 'wake_alarm',
       enabled:!!document.getElementById('alarmEnabled')?.checked,
@@ -4264,9 +4281,10 @@ function updateTelemetry(payload){
   if(p!==null){
     latestMeasuredPressure=p;
     const v=Number(p).toFixed(1);
-    setPressure(v);
+    setCurrentPressure(p);
     setText('[data-live-pressure]',v);
   }else{
+    setCurrentPressure(null);
     setText('[data-live-pressure]','--');
   }
   const env=envSummary(data);
@@ -4295,11 +4313,10 @@ function sendCommand(text){
   const kpaMatch=t.match(/([0-9]+(?:\.[0-9]+)?)\s*kPa/i);
   if(kpaMatch || t.includes('目标压力') || t.includes('目标支撑') || t.includes('执行目标')){
     const target=kpaMatch ? Number(kpaMatch[1]) : currentTargetPressure();
-    setPressure(target);
     sendPillowCommand('tilt',{target_kpa:target,duration_sec:0});
     return;
   }
-  if(t.includes('急停') || t.includes('停止')){sendPillowCommand('stop',{duration_sec:0});return;}
+  if(t.includes('急停') || t.includes('停止')){sendPillowCommand('halt',{duration_sec:0});return;}
   if(t.includes('泄压') || t.includes('降低')){sendPillowCommand('recover',{duration_sec:2});return;}
   if(t.includes('充气') || t.includes('升高')){sendPillowCommand('tilt',{duration_sec:2});return;}
   sendAiIntent(t);
@@ -4395,7 +4412,7 @@ function updateTelemetry(payload){
   if(Object.prototype.hasOwnProperty.call(payload,'esp32_connected')){esp32Connected=!!payload.esp32_connected;setCloudState(cloudConnected,esp32Connected);}
   const data=flattenSensorData(payload); latestSensorData=data; latestSensorAt=Date.now();
   if(data.last_snore_event && typeof data.last_snore_event==='object')latestSnoreEvent=data.last_snore_event;
-  const p=pressureSummary(data); if(p!==null){latestMeasuredPressure=p; const v=Number(p).toFixed(1); setPressure(v); setText('[data-live-pressure]',v);} else {setText('[data-live-pressure]','--');}
+  const p=pressureSummary(data); if(p!==null){latestMeasuredPressure=p; const v=Number(p).toFixed(1); setCurrentPressure(p); setText('[data-live-pressure]',v);} else {setCurrentPressure(null); setText('[data-live-pressure]','--');}
   const env=envSummary(data); setText('[data-live-env]',env.temp!==null?env.temp.toFixed(1)+'°':'--'); setText('[data-live-humidity]',env.hum!==null?env.hum.toFixed(0)+'% RH':'等待数据'); setText('[data-live-air]',env.air!==null?(env.air<10?env.air.toFixed(1):env.air.toFixed(0)):'--'); setText('[data-live-light]',env.light!==null?env.light.toFixed(0):'--');
   if(typeof data.led_enabled==='boolean' || typeof data.led_brightness_pct==='number')setLedUi(typeof data.led_enabled==='boolean'?data.led_enabled:ledEnabled,typeof data.led_brightness_pct==='number'?data.led_brightness_pct:ledBrightnessPct);
   if(typeof data.fan_on==='boolean')setIrDeviceUi('fan',data.fan_on); if(typeof data.humidifier_on==='boolean')setIrDeviceUi('humidifier',data.humidifier_on);
@@ -4420,16 +4437,10 @@ tabs.forEach(tab=>{
 document.querySelectorAll('[data-open-settings]').forEach(btn=>{
   btn.addEventListener('click',()=>activatePage('settings'));
 });
-pressureInputs.forEach(input=>{
-  input.addEventListener('input',e=>setPressure(e.target.value));
-  input.addEventListener('change',e=>sendCommand('目标压力 ' + Number(e.target.value).toFixed(1) + ' kPa'));
-});
 document.querySelectorAll('[data-adjust]').forEach(btn=>{
   btn.addEventListener('click',()=>{
-    const current=Number(pressureInputs[0].value || 3.2);
-    const next=current + Number(btn.dataset.adjust);
-    setPressure(next);
-    sendCommand('目标压力 ' + Number(pressureInputs[0].value).toFixed(1) + ' kPa');
+    const direction=Number(btn.dataset.adjust);
+    sendPillowCommand(direction < 0 ? 'recover' : 'tilt',{duration_sec:1});
   });
 });
 document.querySelectorAll('[data-cmd]').forEach(btn=>{
